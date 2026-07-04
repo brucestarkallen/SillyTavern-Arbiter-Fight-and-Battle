@@ -1,0 +1,13 @@
+{
+    "display_name": "Arbiter",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "brucestarkallen",
+    "version": "0.1.0",
+    "homePage": "https://github.com/brucestarkallen/St-arbiter-dice-",
+    "auto_update": false,
+    "generate_interceptor": "arbiterInterceptor"
+}

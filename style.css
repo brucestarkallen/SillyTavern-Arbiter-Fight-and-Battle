@@ -1,0 +1,16 @@
+/* Arbiter v0.1 */
+#arb_settings .arb_row { display: flex; align-items: center; gap: 8px; margin: 4px 0; flex-wrap: wrap; }
+#arb_settings .arb_row label { flex: 1; min-width: 140px; }
+#arb_settings .arb_num { width: 70px; }
+#arb_settings textarea { width: 100%; font-family: monospace; font-size: 0.85em; }
+#arb_settings .arb_hint { opacity: 0.7; font-size: 0.85em; margin: 2px 0 8px 0; }
+#arb_settings .arb_log { max-height: 220px; overflow-y: auto; font-family: monospace; font-size: 0.8em; border: 1px solid var(--SmartThemeBorderColor, #444); border-radius: 5px; padding: 6px; margin-top: 4px; }
+#arb_settings .arb_log_entry { padding: 3px 0; border-bottom: 1px dashed var(--SmartThemeBorderColor, #333); }
+#arb_settings .arb_badge { display: inline-block; padding: 0 6px; border-radius: 4px; font-weight: bold; margin-right: 6px; }
+#arb_settings .arb_t_DECISIVE { background: #1d7a1d; color: #fff; }
+#arb_settings .arb_t_SUCCESS { background: #2e8b57; color: #fff; }
+#arb_settings .arb_t_SUCCESS_COST { background: #7a7a1d; color: #fff; }
+#arb_settings .arb_t_SETBACK { background: #8a5a1d; color: #fff; }
+#arb_settings .arb_t_FAILURE { background: #8b3a3a; color: #fff; }
+#arb_settings .arb_t_DISASTER { background: #6b1010; color: #fff; }
+#arb_settings .arb_buttons { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
