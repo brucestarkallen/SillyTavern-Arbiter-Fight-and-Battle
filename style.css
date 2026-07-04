@@ -14,3 +14,15 @@
 #arb_settings .arb_t_FAILURE { background: #8b3a3a; color: #fff; }
 #arb_settings .arb_t_DISASTER { background: #6b1010; color: #fff; }
 #arb_settings .arb_buttons { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+
+/* Duel HUD (v0.2) */
+#arb_hud { position: fixed; top: 46px; left: 50%; transform: translateX(-50%); z-index: 3000; display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; background: rgba(18,18,18,0.85); color: #eee; font-size: 0.8em; box-shadow: 0 2px 8px rgba(0,0,0,.45); max-width: 96vw; flex-wrap: nowrap; white-space: nowrap; }
+#arb_hud .arb_hud_bar { width: 64px; height: 8px; border-radius: 4px; background: rgba(255,255,255,.15); overflow: hidden; display: inline-block; }
+#arb_hud .arb_hud_bar span { display: block; height: 100%; background: #4caf7d; }
+#arb_hud .arb_hud_bar.op span { background: #c05555; }
+#arb_hud .arb_hud_name { font-weight: 600; }
+#arb_hud .arb_hud_val { opacity: .8; }
+#arb_hud .arb_hud_vs { opacity: .7; }
+#arb_hud .arb_hud_x { cursor: pointer; opacity: .6; margin-left: 4px; }
+#arb_hud .arb_hud_x:hover { opacity: 1; }
+#arb_hud .arb_hud_over { color: #ffd24d; }

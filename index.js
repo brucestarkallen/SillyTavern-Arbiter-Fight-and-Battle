@@ -93,12 +93,15 @@
      *  - failures near the threshold become fail-forward setbacks.
      * u near 0 = best possible outcome, u near 1 = worst.
      */
-    function sliceOutcome(P, u) {
+    function sliceOutcome(P, u, mods) {
+        const m = mods || { dec: 1, cost: 1, sb: 1, dis: 1 };
         const F = 1 - P;
-        const decisiveW = P * (0.05 + 0.15 * P);          // deepest success
-        const costW = P * (0.15 + 0.35 * F);              // scraped-by success
-        const setbackW = F * (0.30 + 0.20 * P);           // fail-forward
-        const disasterW = F * (0.03 + 0.12 * F);          // far tail
+        let decisiveW = P * (0.05 + 0.15 * P) * m.dec;         // deepest success
+        let costW = P * (0.15 + 0.35 * F) * m.cost;            // scraped-by success
+        let setbackW = F * (0.30 + 0.20 * P) * m.sb;           // fail-forward
+        let disasterW = F * (0.03 + 0.12 * F) * m.dis;         // far tail
+        costW = Math.min(costW, Math.max(0, P - decisiveW));   // safety clamps
+        disasterW = Math.min(disasterW, Math.max(0, F - setbackW));
 
         if (u < P) {
             if (u < decisiveW) return 'DECISIVE';
@@ -156,7 +159,72 @@
         inferior: 'A-2', peer: 'A', superior: 'A+2',
     };
 
-    globalThis.ArbiterEngine = { probFromDelta, sliceOutcome, rngFloat, TIERS, TIER_RATINGS };
+    /** Difficulty presets: a flat player edge plus tier-width modifiers. */
+    const PRESETS = {
+        gritty: { bonus: 0, mods: { dec: 0.8, cost: 1.3, sb: 1.0, dis: 1.5 } },
+        realistic: { bonus: 0, mods: { dec: 1, cost: 1, sb: 1, dis: 1 } },
+        heroic: { bonus: 1, mods: { dec: 1.25, cost: 1.0, sb: 1.0, dis: 0.5 } },
+    };
+
+    /**
+     * Duel exchange effects, from the PLAYER's roll perspective.
+     * opp/self = poise damage dealt; injuries are persistent -1 rating tags;
+     * SETBACK grants the player a fail-forward "opening" (+1 next round).
+     */
+    const EXCHANGE_EFFECTS = {
+        DECISIVE: { opp: 2, self: 0, injureOpp: true, winner: 'self' },
+        SUCCESS: { opp: 1.5, self: 0, winner: 'self' },
+        SUCCESS_COST: { opp: 1, self: 0.5, winner: 'self' },
+        SETBACK: { opp: 0, self: 1, winner: 'opp', opening: true },
+        FAILURE: { opp: 0, self: 1.5, winner: 'opp' },
+        DISASTER: { opp: 0, self: 2, injureSelf: true, winner: 'opp' },
+    };
+
+    /**
+     * Pure: apply one exchange tier to (player, opponent) side states.
+     * Side shape: { poise, injuries, momentum, opening }. Returns new sides
+     * plus over/victor. Momentum: exchange winner +0.5 (cap 1), loser resets.
+     */
+    function applyExchangeEffects(pl, op, tier) {
+        const fx = EXCHANGE_EFFECTS[tier] || EXCHANGE_EFFECTS.FAILURE;
+        const p = Object.assign({}, pl);
+        const o = Object.assign({}, op);
+        p.poise = Math.round((p.poise - fx.self) * 2) / 2;
+        o.poise = Math.round((o.poise - fx.opp) * 2) / 2;
+        if (fx.injureOpp) o.injuries = (o.injuries || 0) + 1;
+        if (fx.injureSelf) p.injuries = (p.injuries || 0) + 1;
+        if (fx.winner === 'self') {
+            p.momentum = Math.min(1, (p.momentum || 0) + 0.5);
+            o.momentum = 0;
+        } else {
+            o.momentum = Math.min(1, (o.momentum || 0) + 0.5);
+            p.momentum = 0;
+        }
+        p.opening = !!fx.opening; // fail-forward: exploitable next round
+        let over = false;
+        let victor = null;
+        if (p.poise <= 0 || o.poise <= 0) {
+            over = true;
+            if (p.poise <= 0 && o.poise <= 0) victor = fx.winner === 'self' ? 'player' : 'opp';
+            else victor = o.poise <= 0 ? 'player' : 'opp';
+        }
+        return { player: p, opp: o, over, victor };
+    }
+
+    /** Narration-safe condition word for a poise fraction. */
+    function poiseWord(cur, max) {
+        const r = max > 0 ? cur / max : 0;
+        if (r > 0.8) return 'fresh';
+        if (r > 0.5) return 'pressed';
+        if (r > 0.2) return 'staggered';
+        if (r > 0) return 'breaking';
+        return 'beaten';
+    }
+
+    globalThis.ArbiterEngine = {
+        probFromDelta, sliceOutcome, rngFloat, TIERS, TIER_RATINGS,
+        PRESETS, EXCHANGE_EFFECTS, applyExchangeEffects, poiseWord,
+    };
 
     /* ------------------------------------------------------------------ */
     /* Settings (global) and per-chat metadata                             */
@@ -193,6 +261,11 @@
         forceTag: '[roll]',
         skipTag: '[skip]',
         verbs: DEFAULT_VERBS,
+        mode: 'adjudicated',      // adjudicated | fast (fast = zero-LLM pre-rolled pool)
+        preset: 'realistic',      // gritty | realistic | heroic
+        autoDuel: true,           // let the adjudicator open/close duels from the fiction
+        duelPoise: 5,             // default poise pool (sheet "poise" per actor overrides)
+        showHud: true,
         debug: false,
     };
 
@@ -409,7 +482,8 @@
         ' "opposition": "<a character name from the sheet if a known character opposes; otherwise a task tier: trivial|easy|moderate|hard|extreme, or an unnamed-opponent tier: mook|trained|elite|formidable|inferior|peer|superior>",',
         ' "circumstance": <integer -3..3>,',
         ' "why": "<one short clause justifying circumstance>",',
-        ' "stakes": "<what success or failure means here, one short clause>"}',
+        ' "stakes": "<what success or failure means here, one short clause>",',
+        ' "duel_start": null | "<opponent name — ONLY if this action clearly initiates sustained personal combat (a duel/fight/battle) between the actor and that opponent right now>"}',
         '',
         'Rules:',
         '- check=false for dialogue, routine or trivial actions with no meaningful chance of interesting failure, pure narration, OOC talk, or actions attempted by characters other than the player.',
@@ -454,7 +528,162 @@
             circumstance: clamp(Math.round(Number(obj.circumstance) || 0), -3, 3),
             why: String(obj.why || '').slice(0, 160),
             stakes: String(obj.stakes || '').slice(0, 160),
+            duel_start: (typeof obj.duel_start === 'string' && obj.duel_start.trim()) ? obj.duel_start.trim().slice(0, 60) : null,
         };
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Duel mode                                                           */
+    /* ------------------------------------------------------------------ */
+
+    const DUEL_SYSTEM = [
+        'You are Arbiter, refereeing one round of an ACTIVE duel in a roleplay. Score the player\'s stated move for this exchange. You NEVER decide who wins — only the parameters. Output STRICT JSON only: one object, no markdown, no commentary.',
+        '',
+        'Schema:',
+        '{"exchange": true|false,',
+        ' "action": "<the move, 3-10 words>",',
+        ' "circumstance": <integer -3..3>,',
+        ' "why": "<one short clause>",',
+        ' "combat_ended": true|false}',
+        '',
+        'Rules:',
+        '- In an active duel nearly every player turn IS an exchange — the opponent presses regardless. A passive, hesitant, or purely defensive turn is an exchange with NEGATIVE circumstance, not exchange=false.',
+        '- exchange=false only for a genuine lull: pure dialogue while circling, with no blows possible.',
+        '- circumstance rewards concrete tactics, exploited weaknesses and openings (+); penalizes recklessness noted in the fiction, bad footing, impairment (-). 0 if nothing notable.',
+        '- combat_ended=true ONLY if the fiction has already clearly ended the fight (someone fled, yielded, was separated, or the scene left combat).',
+    ].join('\n');
+
+    function normalizeDuelAdj(obj) {
+        if (!obj || typeof obj !== 'object') return null;
+        if (obj.combat_ended === true) return { combat_ended: true };
+        if (obj.exchange === false) return { exchange: false };
+        if (obj.exchange !== true) return null;
+        return {
+            exchange: true,
+            action: String(obj.action || 'the exchange').slice(0, 140),
+            circumstance: clamp(Math.round(Number(obj.circumstance) || 0), -3, 3),
+            why: String(obj.why || '').slice(0, 160),
+        };
+    }
+
+    function getPreset() {
+        const s = getSettings();
+        return PRESETS[s.preset] || PRESETS.realistic;
+    }
+
+    function duelActive(meta) {
+        return !!(meta && meta.duel && meta.duel.active && !meta.duel.over);
+    }
+
+    function poiseFor(actorEntry, fallbackPoise) {
+        if (actorEntry && Number.isFinite(Number(actorEntry.poise))) return clamp(actorEntry.poise, 1, 20);
+        return clamp(fallbackPoise, 1, 20);
+    }
+
+    function startDuel(meta, playerName, oppName, domain) {
+        const s = getSettings();
+        const fallback = clamp(s.defaultRating, 0, 10);
+        const pEntry = findActor(meta, playerName);
+        const oEntry = findActor(meta, oppName);
+        const d = String(domain || 'melee').toLowerCase();
+        const pPoise = poiseFor(pEntry, s.duelPoise);
+        const oPoise = poiseFor(oEntry, s.duelPoise);
+        meta.duel = {
+            active: true,
+            over: false,
+            victor: null,
+            round: 0,
+            domain: d,
+            player: { name: playerName, rating: ratingFor(pEntry, d, fallback), poise: pPoise, maxPoise: pPoise, injuries: 0, momentum: 0, opening: false },
+            opp: { name: oppName, rating: oEntry ? ratingFor(oEntry, d, fallback) : clamp(TIER_RATINGS.trained, 0, 10), poise: oPoise, maxPoise: oPoise, injuries: 0, momentum: 0, opening: false },
+        };
+        dlog('duel started:', playerName, 'vs', oppName, '(' + d + ')');
+        return meta.duel;
+    }
+
+    function endDuel(meta, silent) {
+        if (meta && meta.duel) meta.duel = null;
+        renderHud();
+        if (!silent) toast('info', 'Duel ended.');
+    }
+
+    /** Resolve one duel exchange: consume opening, roll, apply, advance. */
+    function resolveDuelExchange(meta, circumstance) {
+        const duel = meta.duel;
+        const preset = getPreset();
+        const openingBonus = duel.player.opening ? 1 : 0;
+        duel.player.opening = false;
+
+        const effP = duel.player.rating - duel.player.injuries + duel.player.momentum + openingBonus;
+        const effO = duel.opp.rating - duel.opp.injuries + duel.opp.momentum;
+        const delta = clamp(effP - effO + circumstance + preset.bonus, -13, 13);
+        const P = probFromDelta(delta);
+        const u = rngFloat();
+        const tier = sliceOutcome(P, u, preset.mods);
+
+        const applied = applyExchangeEffects(duel.player, duel.opp, tier);
+        duel.player = Object.assign({ name: duel.player.name, rating: duel.player.rating, maxPoise: duel.player.maxPoise }, applied.player);
+        duel.opp = Object.assign({ name: duel.opp.name, rating: duel.opp.rating, maxPoise: duel.opp.maxPoise }, applied.opp);
+        duel.round += 1;
+        if (applied.over) {
+            duel.over = true;
+            duel.victor = applied.victor;
+        }
+        return { aR: effP, oR: effO, oppLabel: duel.opp.name, delta, P, u, tier, opening: openingBonus > 0 };
+    }
+
+    function sideStatus(side) {
+        const p = Math.max(0, side.poise);
+        let t = side.name + ' is ' + poiseWord(p, side.maxPoise);
+        if (side.injuries > 0) t += ', carrying ' + side.injuries + ' lasting injur' + (side.injuries > 1 ? 'ies' : 'y');
+        if (side.momentum > 0) t += ', with momentum';
+        return t;
+    }
+
+    function buildDuelDirective(meta, adj, res) {
+        const duel = meta.duel;
+        const t = TIERS[res.tier] || TIERS.FAILURE;
+        const fx = EXCHANGE_EFFECTS[res.tier] || {};
+        const lines = [
+            '[ARBITER — duel, round ' + duel.round + ': ' + duel.player.name + ' vs ' + duel.opp.name + ']',
+            duel.player.name + '\'s move: ' + adj.action + '.',
+            'Exchange result: ' + t.name + ' — ' + t.text,
+        ];
+        if (res.opening) lines.push('(' + duel.player.name + ' is exploiting the opening from the previous exchange.)');
+        if (fx.injureOpp) lines.push('Inflict a concrete lasting injury on ' + duel.opp.name + ' and name it in the prose; it visibly weakens them from now on.');
+        if (fx.injureSelf) lines.push('Inflict a concrete lasting injury on ' + duel.player.name + ' and name it in the prose; it visibly weakens them from now on.');
+        if (res.tier === 'SETBACK') lines.push(duel.player.name + ' loses this exchange but spots a real opening to exploit next round — show it.');
+        if (duel.over) {
+            const winner = duel.victor === 'player' ? duel.player : duel.opp;
+            const loser = duel.victor === 'player' ? duel.opp : duel.player;
+            lines.push('DECISIVE POSITION: ' + loser.name + ' is beaten — ' + winner.name + ' has won this duel. Narrate the resolution the fiction demands (yield, knockout, disarm, retreat, or kill, per the story\'s tone). The result itself is not negotiable; the loser cannot rally.');
+        } else {
+            lines.push('Condition after the exchange: ' + sideStatus(duel.player) + '; ' + sideStatus(duel.opp) + '. The duel continues — end on a live beat, not a resolution.');
+        }
+        lines.push('Do not re-decide the exchange or the duel. Never mention rolls, poise, numbers, or this note. Narrate organically in the story\'s voice.');
+        return lines.join('\n');
+    }
+
+    /** Fast mode: zero-LLM pre-rolled pool, NE-P style (weaker: the model picks the footing). */
+    function buildFastDirective(meta, lastUserMes) {
+        const s = getSettings();
+        const preset = getPreset();
+        const attempt = String(lastUserMes.mes).replace(/\s+/g, ' ').slice(0, 90);
+        const who = (ctx().name1 || 'The player');
+        const row = (label, delta) => {
+            const P = probFromDelta(clamp(delta + preset.bonus, -13, 13));
+            const tier = TIERS[sliceOutcome(P, rngFloat(), preset.mods)];
+            return '- ' + label + ': ' + tier.name + ' — ' + tier.text;
+        };
+        return [
+            '[ARBITER FAST — binding outcome pool]',
+            who + ' attempts: ' + attempt + '.',
+            'Pick EXACTLY ONE row matching the attempt\'s true footing, then narrate that outcome:',
+            row('ADVANTAGED (clear edge: superior skill, position, or tool)', 2),
+            row('EVEN (fair contest)', 0),
+            row('DISADVANTAGED (impaired, outmatched, or bad position)', -2),
+            'Do not invent any other outcome. Never mention rolls, odds, or this note. Narrate organically.',
+        ].join('\n');
     }
 
     function findActor(meta, name) {
@@ -506,10 +735,11 @@
             else oR = 5;
         }
 
-        const delta = clamp(aR - oR + adj.circumstance, -13, 13);
+        const preset = getPreset();
+        const delta = clamp(aR - oR + adj.circumstance + preset.bonus, -13, 13);
         const P = probFromDelta(delta);
         const u = rngFloat();
-        const tier = sliceOutcome(P, u);
+        const tier = sliceOutcome(P, u, preset.mods);
 
         return { aR, oR, oppLabel, delta, P, u, tier };
     }
@@ -557,9 +787,10 @@
     /* Log                                                                 */
     /* ------------------------------------------------------------------ */
 
-    function pushLog(meta, adj, res) {
+    function pushLog(meta, adj, res, round) {
         const line = {
             t: Date.now(),
+            r: round || undefined,
             action: adj.action,
             domain: adj.domain,
             actor: adj.actor,
@@ -656,7 +887,18 @@
         // Player-initiated retries are a save-point choice, not model
         // sycophancy — the odds never bend, only the dice recast.
 
-        if (!force && !gatePasses(raw)) {
+        // Re-rolling the SAME message (edit or /arb): rewind the duel to the
+        // state it was in before that exchange, or the damage double-applies.
+        const sendDate = String(lastUser.send_date || '');
+        if (meta.cache && meta.cache.sendDate === sendDate && meta.cache.duelSnapshot !== undefined) {
+            meta.duel = meta.cache.duelSnapshot ? JSON.parse(JSON.stringify(meta.cache.duelSnapshot)) : null;
+            dlog('duel state rewound for re-roll of the same message');
+        }
+        // A concluded duel clears once the story moves to a new message.
+        if (meta.duel && meta.duel.over) { meta.duel = null; renderHud(); }
+
+        const inDuel = duelActive(meta);
+        if (!force && !inDuel && !gatePasses(raw)) {
             dlog('gate: no check plausible');
             return;
         }
@@ -666,28 +908,99 @@
         const t0 = Date.now();
         try {
             const budget = clamp(s.timeoutMs, 1500, 60000);
+            const duelSnapshot = meta.duel ? JSON.parse(JSON.stringify(meta.duel)) : null;
+            const commitCache = (directive, tier) => { meta.cache = { key, sendDate, directive, tier, duelSnapshot }; };
+            const duelToast = (adjAction, res) => {
+                if (!s.toastResults) return;
+                const t = TIERS[res.tier] || {};
+                toast('info', escHtml(adjAction) + (s.showMath ? '<br><small>' + escHtml('Δ=' + (res.delta >= 0 ? '+' : '') + res.delta + ' → P ' + Math.round(res.P * 100) + '% → u ' + (Math.round(res.u * 1000) / 1000)) + '</small>' : ''), 'R' + meta.duel.round + ' · ' + t.name);
+            };
+
+            // ── FAST MODE: zero LLM calls, pre-rolled outcomes ──
+            if (s.mode === 'fast') {
+                if (inDuel) {
+                    const action = String(lastUser.mes).replace(/\s+/g, ' ').slice(0, 90);
+                    const res = resolveDuelExchange(meta, 0);
+                    const directive = buildDuelDirective(meta, { action }, res);
+                    setInjection(directive);
+                    commitCache(directive, res.tier);
+                    pushLog(meta, { action, domain: meta.duel.domain, actor: meta.duel.player.name, circumstance: 0, why: 'fast' }, res, meta.duel.round);
+                    saveMeta(); renderHud(); renderLog();
+                    duelToast(action, res);
+                } else {
+                    const directive = buildFastDirective(meta, lastUser);
+                    setInjection(directive);
+                    commitCache(directive, 'FAST');
+                    saveMeta();
+                    dlog('fast pool injected');
+                }
+                return;
+            }
+
+            // ── ADJUDICATED MODE ──
+            const sysPrompt = inDuel ? DUEL_SYSTEM : ADJ_SYSTEM;
             const userPrompt = buildAdjUserPrompt(chat, lastUser, meta);
 
-            let rawOut = await callLLM(ADJ_SYSTEM, userPrompt, 260, budget);
-            let adj = normalizeAdj(extractJson(rawOut));
+            let rawOut = await callLLM(sysPrompt, userPrompt, 260, budget);
+            let adj = inDuel ? normalizeDuelAdj(extractJson(rawOut)) : normalizeAdj(extractJson(rawOut));
 
             // One fast retry if the model returned junk and time remains.
             if (!adj && rawOut && (Date.now() - t0) < budget - 1500) {
                 dlog('invalid JSON, retrying once');
                 rawOut = await callLLM(
-                    ADJ_SYSTEM + '\n\nYour previous output was invalid. Output ONLY the JSON object.',
+                    sysPrompt + '\n\nYour previous output was invalid. Output ONLY the JSON object.',
                     userPrompt, 260, budget - (Date.now() - t0));
-                adj = normalizeAdj(extractJson(rawOut));
+                adj = inDuel ? normalizeDuelAdj(extractJson(rawOut)) : normalizeAdj(extractJson(rawOut));
             }
 
             if (!adj) {
                 dlog('adjudicator unavailable or invalid — turn proceeds unmodified');
                 return;
             }
+
+            if (inDuel) {
+                if (adj.combat_ended) {
+                    endDuel(meta, true);
+                    commitCache('', null);
+                    saveMeta();
+                    toast('info', 'The fiction ended the duel.');
+                    return;
+                }
+                if (adj.exchange === false) {
+                    dlog('duel lull — no exchange this turn');
+                    commitCache('', null);
+                    saveMeta();
+                    return;
+                }
+                const res = resolveDuelExchange(meta, adj.circumstance);
+                const directive = buildDuelDirective(meta, adj, res);
+                setInjection(directive);
+                commitCache(directive, res.tier);
+                pushLog(meta, { action: adj.action, domain: meta.duel.domain, actor: meta.duel.player.name, circumstance: adj.circumstance, why: adj.why }, res, meta.duel.round);
+                saveMeta(); renderHud(); renderLog();
+                dlog('duel round', meta.duel.round, 'resolved in', Date.now() - t0, 'ms →', res.tier);
+                duelToast(adj.action, res);
+                return;
+            }
+
             if (adj.check === false) {
                 dlog('adjudicator: no check needed');
-                meta.cache = { key, directive: '', tier: null }; // remember the "no check" verdict too
+                commitCache('', null); // remember the "no check" verdict too
                 saveMeta();
+                return;
+            }
+
+            // Auto duel start: this attempt initiates sustained combat, so it
+            // resolves as round 1 of a fresh duel.
+            if (adj.duel_start && s.autoDuel) {
+                startDuel(meta, adj.actor, adj.duel_start, adj.domain);
+                const res = resolveDuelExchange(meta, adj.circumstance);
+                const directive = buildDuelDirective(meta, adj, res);
+                setInjection(directive);
+                commitCache(directive, res.tier);
+                pushLog(meta, adj, res, meta.duel.round);
+                saveMeta(); renderHud(); renderLog();
+                toast('info', escHtml(meta.duel.player.name + ' vs ' + meta.duel.opp.name), 'DUEL — R1 · ' + (TIERS[res.tier] || {}).name);
                 return;
             }
 
@@ -695,7 +1008,7 @@
             const directive = buildDirective(adj, res);
             setInjection(directive);
 
-            meta.cache = { key, directive, tier: res.tier };
+            commitCache(directive, res.tier);
             const line = pushLog(meta, adj, res);
             saveMeta();
 
@@ -822,6 +1135,32 @@
       </div>
       <div class="arb_hint">Gate = the free, instant filter deciding if a message even <i>might</i> be a risky attempt (conservative: needs try/attempt or 2+ action verbs · normal: any action verb · aggressive: also trailing questions). Default rating: skill 0-10 assumed for anyone not on the sheet.</div>
       <div class="arb_row">
+        <label>Mode</label>
+        <select id="arb_mode" class="text_pole">
+          <option value="adjudicated">adjudicated</option>
+          <option value="fast">fast</option>
+        </select>
+        <label>Preset</label>
+        <select id="arb_preset" class="text_pole">
+          <option value="gritty">gritty</option>
+          <option value="realistic">realistic</option>
+          <option value="heroic">heroic</option>
+        </select>
+      </div>
+      <div class="arb_hint">Mode: adjudicated = referee micro-call per check (accurate). Fast = zero-latency pre-rolled pool, no referee — the storyteller picks the footing (weaker, use for lag-free sessions). Preset: gritty = harsher tails, costlier wins · realistic = neutral curve · heroic = +1 player edge, halved disasters.</div>
+      <div class="arb_row">
+        <label class="checkbox_label"><input id="arb_autoduel" type="checkbox"><span>Auto duel</span></label>
+        <label class="checkbox_label"><input id="arb_showhud" type="checkbox"><span>Duel HUD</span></label>
+        <label>Default poise</label><input id="arb_poise" type="number" min="1" max="20" class="text_pole arb_num">
+      </div>
+      <div class="arb_hint">Auto duel: the referee opens duels when combat clearly starts and closes them when the fiction ends one. HUD: floating round + poise bars while a duel runs (✕ ends it). Poise: each side's pool — 5 suits people, 6-8 suits mecha Frames; a "poise" key per actor in the sheet overrides this.</div>
+      <div class="arb_row">
+        <label>Duel vs</label><input id="arb_duel_name" type="text" class="text_pole" placeholder="opponent name">
+        <div id="arb_duel_start" class="menu_button">Start duel</div>
+        <div id="arb_duel_end" class="menu_button">End duel</div>
+      </div>
+      <div class="arb_hint">Manual duel controls — same as /duel &lt;name&gt; and /duelend. Ratings and poise come from the sheet; unlisted opponents count as trained.</div>
+      <div class="arb_row">
         <label>Inject depth</label><input id="arb_depth" type="number" min="0" max="99" class="text_pole arb_num">
         <label>Inject role</label>
         <select id="arb_role" class="text_pole">
@@ -898,11 +1237,52 @@
         const rows = meta.log.map(l => {
             const t = TIERS[l.tier] || { name: l.tier };
             return '<div class="arb_log_entry"><span class="arb_badge arb_t_' + escHtml(l.tier) + '">' +
-                escHtml(t.name) + '</span>' + escHtml(l.actor + ': ' + l.action) +
+                escHtml(t.name) + '</span>' + (l.r ? '[R' + escHtml(String(l.r)) + '] ' : '') + escHtml(l.actor + ': ' + l.action) +
                 '<br><small>' + escHtml(l.domain + ' vs ' + l.opp + ' · ' + mathLine(l)) +
                 (l.why ? ' · ' + escHtml(l.why) : '') + '</small></div>';
         });
         el.html(rows.join(''));
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Duel HUD — floating round/poise bars                                */
+    /* ------------------------------------------------------------------ */
+
+    function hudBar(side, cls) {
+        const pct = Math.max(0, Math.min(100, Math.round((Math.max(0, side.poise) / side.maxPoise) * 100)));
+        const mom = side.momentum > 0 ? ' ▲' : '';
+        const inj = side.injuries > 0 ? ' ✚' + side.injuries : '';
+        return '<span class="arb_hud_name">' + escHtml(side.name) + mom + inj + '</span>' +
+            '<span class="arb_hud_bar ' + cls + '"><span style="width:' + pct + '%"></span></span>' +
+            '<span class="arb_hud_val">' + Math.max(0, side.poise) + '/' + side.maxPoise + '</span>';
+    }
+
+    function renderHud() {
+        try {
+            if (typeof document === 'undefined' || !document.body || !document.createElement) return;
+            const s = getSettings();
+            const meta = getMeta();
+            const duel = meta && meta.duel;
+            let el = document.getElementById('arb_hud');
+            if (!duel || !duel.active || !s.showHud) { if (el) el.remove(); return; }
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'arb_hud';
+                document.body.appendChild(el);
+                el.addEventListener('click', (ev) => {
+                    if (ev.target && ev.target.classList && ev.target.classList.contains('arb_hud_x')) {
+                        const m = getMeta();
+                        if (m) { endDuel(m, false); saveMeta(); }
+                    }
+                });
+            }
+            const status = duel.over
+                ? '<b class="arb_hud_over">' + escHtml((duel.victor === 'player' ? duel.player.name : duel.opp.name)) + ' WINS</b>'
+                : '<b>R' + duel.round + '</b>';
+            el.innerHTML = status + ' ' + hudBar(duel.player, 'pl') +
+                '<span class="arb_hud_vs">⚔</span>' + hudBar(duel.opp, 'op') +
+                '<span class="arb_hud_x" title="End duel">✕</span>';
+        } catch (e) { /* the HUD must never break anything */ }
     }
 
     function bindUI() {
@@ -922,6 +1302,21 @@
         $('#arb_forcetag').val(s.forceTag).on('input', function () { s.forceTag = this.value; saveSettings(); });
         $('#arb_skiptag').val(s.skipTag).on('input', function () { s.skipTag = this.value; saveSettings(); });
         $('#arb_verbs').val(s.verbs).on('change', function () { s.verbs = this.value; saveSettings(); });
+
+        $('#arb_mode').val(s.mode).on('change', function () { s.mode = this.value; saveSettings(); });
+        $('#arb_preset').val(s.preset).on('change', function () { s.preset = this.value; saveSettings(); });
+        $('#arb_autoduel').prop('checked', !!s.autoDuel).on('change', function () { s.autoDuel = this.checked; saveSettings(); });
+        $('#arb_showhud').prop('checked', !!s.showHud).on('change', function () { s.showHud = this.checked; saveSettings(); renderHud(); });
+        $('#arb_poise').val(s.duelPoise).on('input', function () { s.duelPoise = clamp(this.value, 1, 20); saveSettings(); });
+        $('#arb_duel_start').on('click', () => {
+            const name = String($('#arb_duel_name').val() || '').trim();
+            if (!name) { toast('warning', 'Give the opponent a name first.'); return; }
+            const meta = getMeta(); if (!meta) return;
+            startDuel(meta, ctx().name1 || 'Player', name, 'melee');
+            saveMeta(); renderHud();
+            toast('success', (ctx().name1 || 'Player') + ' vs ' + name + ' — duel armed. Your next message is round 1.');
+        });
+        $('#arb_duel_end').on('click', () => { const m = getMeta(); if (m && m.duel) { endDuel(m); saveMeta(); } });
 
         $('#arb_profile').on('change', function () { s.profileId = this.value; saveSettings(); });
         $('#arb_profile_refresh').on('click', refreshProfiles);
@@ -972,6 +1367,16 @@
             ['arb', () => { const m = getMeta(); if (m) { m.oneShot = 'force'; saveMeta(); } toast('info', 'Next action will be adjudicated.'); return ''; }, 'Force Arbiter to adjudicate the next action.'],
             ['arbskip', () => { const m = getMeta(); if (m) { m.oneShot = 'skip'; saveMeta(); } toast('info', 'Next action will skip adjudication.'); return ''; }, 'Skip Arbiter on the next action.'],
             ['arbseed', () => { seedSheet(); return ''; }, 'Build/refresh the Arbiter capability sheet from the story.'],
+            ['duel', (na, text) => {
+                const name = String(text || '').trim();
+                if (!name) { toast('warning', 'Usage: /duel <opponent name>'); return ''; }
+                const m = getMeta(); if (!m) return '';
+                startDuel(m, ctx().name1 || 'Player', name, 'melee');
+                saveMeta(); renderHud();
+                toast('success', 'Duel armed vs ' + name + '. Your next message is round 1.');
+                return '';
+            }, 'Start a duel against <opponent name>.'],
+            ['duelend', () => { const m = getMeta(); if (m && m.duel) { endDuel(m); saveMeta(); } return ''; }, 'End the active duel.'],
         ];
         let registered = false;
         try {
@@ -1010,6 +1415,7 @@
             clearInjection();
             renderSheet();
             renderLog();
+            renderHud();
         });
     }
 
@@ -1022,6 +1428,7 @@
             registerCommands();
             initEvents();
             clearInjection();
+            renderHud();
             console.log(LOG, 'v0.1 ready');
         } catch (e) {
             console.error(LOG, 'init failed', e);

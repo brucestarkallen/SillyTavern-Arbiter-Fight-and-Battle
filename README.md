@@ -81,6 +81,7 @@ Fully automatic. Manual controls:
   wouldn't trigger.
 - `/arbskip` (or **Skip next**) — skip the next check.
 - `/arbseed` — rebuild the capability sheet from the story.
+- `/duel <opponent>` / `/duelend` — open or close a duel manually.
 - Inline tags (configurable): put `[roll]` in a message to force, `[skip]` to skip.
 
 **Same action = same fate.** Swipes and regenerates of an unchanged message
@@ -127,9 +128,48 @@ skips the check — the generation proceeds unmodified and the event is logged.
   arithmetic (Δ, P, sample, tier) after the fact. Odds are never shown to the
   storyteller and never shown to you before you commit.
 
+## Duel mode (v0.2)
+
+Fights are sequences, not single rolls. A duel opens automatically when the
+referee sees combat clearly begin (**Auto duel**), or manually via
+`/duel <opponent>` / the panel buttons. Each of your turns is one **exchange**:
+the referee scores your stated tactic into circumstance, one curve sample
+resolves it, and the margin drives a tracked state machine —
+
+- **Poise** — each side's pool (default 5; a `"poise"` key per actor in the
+  sheet overrides it, e.g. 7–8 for mecha Frames). Exchange margins deal 0.5–2
+  poise damage; poise 0 = beaten.
+- **Injuries** — DECISIVE/DISASTER exchanges inflict a lasting injury: a
+  persistent −1 to that side's effective rating, and the prose is instructed to
+  name it.
+- **Momentum** — the exchange winner carries +0.5 (capped at +1); the loser's
+  resets. Fights snowball, comebacks stay possible.
+- **Fail-forward** — a SETBACK loses the exchange but grants a real +1 opening
+  next round, and the prose is told to show it.
+- **The end is mechanical** — when a side hits 0, the storyteller is told who
+  won and narrates the resolution the fiction demands (yield/KO/disarm/kill);
+  it never chooses the winner.
+
+During a duel the verb gate is bypassed (every turn goes to the referee — a
+passive turn is an exchange at negative circumstance, because the opponent
+presses regardless; `exchange:false` is reserved for genuine lulls). The
+referee can also close the duel when the fiction clearly ends it (fled,
+yielded, separated), or use `/duelend`. Editing your move and re-rolling
+rewinds the duel state to before that exchange first, so damage never
+double-applies. A floating **HUD** shows round, poise bars, momentum ▲ and
+injuries ✚ while a duel runs (✕ ends it).
+
+## Presets & Fast mode (v0.2)
+
+**Preset** shifts the whole feel: `gritty` (harsher tails, costlier wins),
+`realistic` (the neutral curve, default), `heroic` (+1 player edge, halved
+disasters). **Mode: fast** trades accuracy for zero added latency: no referee
+call at all — a pre-rolled three-row outcome pool (advantaged / even /
+disadvantaged) is injected and the storyteller picks the footing. Honest
+caveat: that hands footing discretion back to the model, so adjudicated mode
+stays the default; fast also works inside duels (circumstance 0).
+
 ## Roadmap
 
-- v0.2 — Duel mode: opposed exchanges with Poise/Frame Integrity, injury tags,
-  momentum; round-by-round HUD.
-- v0.3 — Difficulty presets (Gritty/Realistic/Heroic), zero-latency Fast mode
-  (pre-rolled pools), log panel polish.
+- v0.3 — opposed NPC-vs-NPC checks, multi-opponent duels, per-domain duel
+  tactics (switching domains mid-fight), richer injury vocabulary.
