@@ -797,6 +797,7 @@
         <label class="checkbox_label"><input id="arb_showmath" type="checkbox"><span>Show math in toast</span></label>
         <label class="checkbox_label"><input id="arb_debug" type="checkbox"><span>Debug log</span></label>
       </div>
+      <div class="arb_hint">Master switch · popup per ruling · include the Δ/P math in that popup · verbose console output for debugging.</div>
 
       <div class="arb_row">
         <label>Adjudicator profile</label>
@@ -809,6 +810,7 @@
         <label>Timeout (ms)</label><input id="arb_timeout" type="number" min="1500" max="60000" step="500" class="text_pole arb_num">
         <label>Context msgs</label><input id="arb_ctx" type="number" min="1" max="10" class="text_pole arb_num">
       </div>
+      <div class="arb_hint">Timeout: max wait for the referee call — on expiry the turn simply proceeds with no check. Context msgs: how many recent messages the referee reads to judge circumstance.</div>
       <div class="arb_row">
         <label>Gate sensitivity</label>
         <select id="arb_sens" class="text_pole">
@@ -818,6 +820,7 @@
         </select>
         <label>Default rating</label><input id="arb_defrating" type="number" min="0" max="10" class="text_pole arb_num">
       </div>
+      <div class="arb_hint">Gate = the free, instant filter deciding if a message even <i>might</i> be a risky attempt (conservative: needs try/attempt or 2+ action verbs · normal: any action verb · aggressive: also trailing questions). Default rating: skill 0-10 assumed for anyone not on the sheet.</div>
       <div class="arb_row">
         <label>Inject depth</label><input id="arb_depth" type="number" min="0" max="99" class="text_pole arb_num">
         <label>Inject role</label>
@@ -827,20 +830,23 @@
           <option value="assistant">assistant</option>
         </select>
       </div>
+      <div class="arb_hint">Where the binding outcome note enters the prompt. Depth 0 + system = very bottom of context, strongest adherence. Leave as-is unless you know why.</div>
       <div class="arb_row">
         <label>Force tag</label><input id="arb_forcetag" type="text" class="text_pole arb_num">
         <label>Skip tag</label><input id="arb_skiptag" type="text" class="text_pole arb_num">
       </div>
+      <div class="arb_hint">Type these anywhere in a message: force tag guarantees a check on that fresh send, skip tag guarantees none. Both editable.</div>
 
       <div class="arb_buttons">
         <div id="arb_btn_force" class="menu_button">Force next</div>
         <div id="arb_btn_skip" class="menu_button">Skip next</div>
         <div id="arb_btn_seed" class="menu_button">Seed sheet from story</div>
       </div>
+      <div class="arb_hint">Force next / Skip next: one-shot flags for your NEXT message — same as /arb and /arbskip. Seed: the referee reads the recent story and drafts the sheet below.</div>
 
       <hr>
       <b>Capability sheet (per chat)</b>
-      <div class="arb_hint">JSON: {"actors": {"Name": {"default": 6, "domains": {"melee": 7}}}}. Ratings 0-10. Unknown actors use the default rating.</div>
+      <div class="arb_hint">JSON: {"actors": {"Name": {"default": 6, "domains": {"melee": 7}}}}. Ratings 0-10 · scale: 2 untrained · 4 trained · 5 pro · 6 veteran · 7 elite · 8 master · 9 legendary. Unknown actors/domains fall back to default.</div>
       <textarea id="arb_sheet" rows="7"></textarea>
       <div class="arb_buttons">
         <div id="arb_sheet_save" class="menu_button">Save sheet</div>
@@ -848,11 +854,13 @@
       </div>
 
       <hr>
-      <b>Verb gate list</b> <span class="arb_hint">(comma-separated; word-boundary matched with s/es/ed/ing)</span>
+      <b>Verb gate list</b>
+      <div class="arb_hint">The action words the free gate scans your messages for (word-boundary match, plus s/es/ed/ing endings; quoted dialogue is ignored). Checks firing on harmless chatter → remove verbs. Real attempts slipping through unchecked → add the verbs your prose actually uses, comma-separated.</div>
       <textarea id="arb_verbs" rows="3"></textarea>
 
       <hr>
       <b>Recent adjudications</b>
+      <div class="arb_hint">Last 30 rulings with the math: Δ = actor − opposition + circumstance → P = success chance → u = the actual roll (low roll = good).</div>
       <div id="arb_log" class="arb_log"></div>
       <div class="arb_buttons"><div id="arb_log_clear" class="menu_button">Clear log</div></div>
     </div>
