@@ -372,20 +372,24 @@ But you can now **opt into a wider payload** per check, with granular toggles
   excludes the card's instruction-type fields (main-prompt override,
   post-history instructions) — like the system prompt, those are bias vectors,
   not physical facts.
+- **Include World Info** (v0.19) — feeds activated lorebook entries into every
+  check, the way SillyTavern activates them: constant ("blue-circle") entries
+  always, and keyword/selective entries when their words appear in your action
+  or the recent story. Reads your active book(s) from ST's dropdown (or pin
+  specific books by name). Vector-only entries (no keywords) aren't activated
+  here — they need the embedding engine; ask if you want true vector search.
 - **Feed the whole chat (budgeted)** — replaces the last-N slice with as much of
   the transcript as fits a char budget, at fuller width than the lean clip.
 - **Include hidden ("ghosted") messages** — surfaces messages you've hidden from
   the story so the referee sees the complete picture.
 - **Context budget (K chars)** — the ceiling for the transcript, the memory
-  block, and the card.
+  block, the card, and the world-info block.
 
 Two exclusions are permanent and deliberate: SillyTavern's **system prompt** and
 your **user persona** are *never* sent to the referee. Both are where "make it
 fun for the hero / I am the chosen one" framing lives, and keeping them out is
 what makes the judge neutral. And **Arbiter's own injected directives are never
-fed back** to the referee — it never grades its own past output. (World-info /
-lorebook inclusion isn't wired yet — it needs an async lorebook read and a
-version-specific accessor; ask if you want it.)
+fed back** to the referee — it never grades its own past output.
 
 A word of honesty on the trade-off: wider context is slower and costs more
 tokens on every check, and dumping tens of thousands of tokens into a small

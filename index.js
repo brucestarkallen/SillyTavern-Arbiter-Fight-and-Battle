@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.18.0';
+    const VERSION = '0.19.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -409,7 +409,8 @@
         EVENT_TYPES, ENCOUNTER_TYPES, extractJsonCandidates, collectMemoryBlock,
         STRATAGEM_EFFECTS, tieCheck, ratingFor, composurePenalty, applyComposureChange,
         looksLikeRecovery, combatantComposurePenalty, applyMoraleShock, passiveComposureRecovery,
-        compactRecent, budgetedTranscript, buildAdjUserPrompt, collectStoryContext, getLastAdj: () => LAST_ADJ,
+        compactRecent, budgetedTranscript, buildAdjUserPrompt, collectStoryContext,
+        wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -449,6 +450,8 @@
         //    neutral system prompt, never SillyTavern's, so that is never included) ──
         adjIncludeMemory: false,  // feed the full memory stack (Summaryception, ledger, notepad, lore, Author's Note) into EVERY check
         adjIncludeCard: false,    // feed the active character card's descriptive fields (description, personality, scenario) into EVERY check
+        adjIncludeWorld: false,   // feed activated World Info / lorebook entries (constant + keyword-triggered) into EVERY check
+        adjWorldBooks: '',        // OPTIONAL comma list pinning specific lorebooks; empty = the active book(s) from ST's dropdown
         adjFullChat: false,       // feed a large budgeted transcript instead of just the last ctxMsgs messages
         adjContextK: 40,          // transcript budget in thousands of chars when adjFullChat is on
         adjIncludeHidden: false,  // include ST-hidden ("ghosted") messages too (Arbiter's own directives are always excluded)
@@ -1585,6 +1588,103 @@
         } catch (e) { dlog('story context gather failed', e); return ''; }
     }
 
+    /* ── World Info / lorebook (read-only) — accessor mirrors the Copilot
+     *    extension's verified pattern: resolve the active book(s), loadWorldInfo,
+     *    then activate entries ourselves (constant always; keyword/selective on
+     *    the action + recent story). Vector-only entries need the embedding
+     *    engine and are not activated here — noted for the user. ── */
+    function wiApiAvailable() { const c = ctx(); return typeof c.loadWorldInfo === 'function'; }
+
+    function wiReadSelectDom() {
+        const out = { all: [], active: [] };
+        try {
+            if (typeof document === 'undefined') return out;
+            const el = document.getElementById('world_info');
+            if (!el || !el.options) return out;
+            for (const opt of el.options) {
+                const name = String(opt.textContent || opt.text || '').trim();
+                if (!name) continue;
+                out.all.push(name);
+                if (opt.selected) out.active.push(name);
+            }
+        } catch (e) { /* ignore */ }
+        return out;
+    }
+
+    /** Which lorebooks to read: a manual pin if given, else ST's active dropdown
+     *  selection, else the globally-selected books, else the chat-bound book. */
+    function wiResolveBooks() {
+        const manual = String(getSettings().adjWorldBooks || '').split(',').map(x => x.trim()).filter(Boolean);
+        if (manual.length) return manual;
+        const out = [];
+        try { const dom = wiReadSelectDom(); if (dom.active.length) out.push(...dom.active); } catch (e) { /* ignore */ }
+        try {
+            const c = ctx();
+            const sel = c.selected_world_info;
+            if (Array.isArray(sel)) for (const x of sel) if (typeof x === 'string' && x.trim()) out.push(x.trim());
+            const md = c.chatMetadata || c.chat_metadata || {};
+            const cw = md.world_info;
+            if (typeof cw === 'string' && cw.trim()) out.push(cw.trim());
+            else if (Array.isArray(cw)) for (const x of cw) if (typeof x === 'string' && x.trim()) out.push(x.trim());
+            else if (cw && typeof cw.world === 'string' && cw.world.trim()) out.push(cw.world.trim());
+        } catch (e) { /* ignore */ }
+        return Array.from(new Set(out.filter(Boolean)));
+    }
+
+    async function wiLoad(book) {
+        const c = ctx();
+        try { const d = await c.loadWorldInfo(book); if (d && d.entries) return d; }
+        catch (e) { dlog('wiLoad failed', book, e); }
+        return null;
+    }
+
+    const wiKeyHit = (keys, scanLower) => {
+        if (!Array.isArray(keys)) return false;
+        for (const k of keys) { const kk = String(k || '').toLowerCase().trim(); if (kk && scanLower.includes(kk)) return true; }
+        return false;
+    };
+
+    /** Pure activation: given raw entries and the scan text, return the entries
+     *  that would fire. Constant entries always; keyword entries when a primary
+     *  key appears in the scan text (selective entries also need a secondary
+     *  hit). Disabled and empty entries are skipped; vector-only entries (no
+     *  keys) do not fire here. */
+    function wiActivateEntries(entries, scanText) {
+        const scan = String(scanText || '').toLowerCase();
+        const hits = [];
+        for (const e of (entries || [])) {
+            if (!e || e.disable) continue;
+            const content = String(e.content || '').trim();
+            if (!content) continue;
+            const keys = e.key || e.keys || [];
+            const sec = e.keysecondary || e.keySecondary || [];
+            let active = false;
+            if (e.constant) active = true;
+            else if (wiKeyHit(keys, scan)) active = (e.selective && sec.length) ? wiKeyHit(sec, scan) : true;
+            if (active) hits.push({ order: Number(e.order) || 100, title: String(e.comment || '').trim(), content });
+        }
+        hits.sort((a, b) => a.order - b.order);
+        return hits;
+    }
+
+    async function collectWorldInfoBlock(scanText, limitChars) {
+        if (!getSettings().adjIncludeWorld || !wiApiAvailable()) return '';
+        const books = wiResolveBooks();
+        if (!books.length) return '';
+        const all = [];
+        for (const b of books) { const data = await wiLoad(b); if (data) for (const e of Object.values(data.entries)) all.push(e); }
+        const hits = wiActivateEntries(all, scanText);
+        if (!hits.length) return '';
+        const cap = limitChars || 8000;
+        const parts = []; let used = 0;
+        for (const h of hits) {
+            const piece = (h.title ? h.title + ': ' : '') + h.content;
+            if (used + piece.length > cap) break;
+            parts.push(piece); used += piece.length;
+        }
+        return parts.length ? '<world_info>\n' + parts.join('\n---\n') + '\n</world_info>' : '';
+    }
+
     /** Harvest a rough roster of named characters from memory + the existing
      *  sheet, so the seeder is reminded of the whole cast even when most are
      *  off-screen. Heuristic only — the model does the real judgement. */
@@ -2424,10 +2524,17 @@
             const sysPrompt = inDuel ? DUEL_SYSTEM : (inWar ? WAR_SYSTEM : (inBattle ? BATTLE_SYSTEM : ADJ_SYSTEM));
             let userPrompt = buildAdjUserPrompt(chat, lastUser, meta);
             if (inBattle) userPrompt += battleContext(meta);
+            // World Info (opt-in, async): activate lorebook entries against the
+            // action + recent story, then fold them in with the other context.
+            if (s.adjIncludeWorld) {
+                const scanText = compactRecent(chat, 12, null, !!s.adjIncludeHidden) + '\n' + String(lastUser.mes || '');
+                const wi = await collectWorldInfoBlock(scanText, clamp(s.adjContextK, 4, 500) * 1000);
+                if (wi) userPrompt = userPrompt.includes('<recent>') ? userPrompt.replace('<recent>', wi + '\n\n<recent>') : (userPrompt + '\n\n' + wi);
+            }
             // Capture verbatim for the inspector so the user can read exactly what
             // the referee sees (mode, both halves of the prompt, size).
             LAST_ADJ = { when: Date.now(), mode: inDuel ? 'duel' : (inWar ? 'war' : (inBattle ? 'battle' : 'check')),
-                rich: { memory: !!s.adjIncludeMemory, card: !!s.adjIncludeCard, fullChat: !!s.adjFullChat, hidden: !!s.adjIncludeHidden, ctxK: s.adjContextK, ctxMsgs: s.ctxMsgs },
+                rich: { memory: !!s.adjIncludeMemory, card: !!s.adjIncludeCard, world: !!s.adjIncludeWorld, fullChat: !!s.adjFullChat, hidden: !!s.adjIncludeHidden, ctxK: s.adjContextK, ctxMsgs: s.ctxMsgs },
                 system: sysPrompt, user: userPrompt, chars: sysPrompt.length + userPrompt.length };
 
             let rawOut = await callLLM(sysPrompt, userPrompt, 260, budget);
@@ -2883,6 +2990,13 @@
           <label class="checkbox_label"><input id="arb_adjcard" type="checkbox"><span>Include character card (description, personality, scenario)</span></label>
         </div>
         <div class="arb_row">
+          <label class="checkbox_label"><input id="arb_adjworld" type="checkbox"><span>Include World Info (constant + keyword-triggered entries)</span></label>
+        </div>
+        <div class="arb_row">
+          <label>Lorebook(s)</label><input id="arb_adjworldbooks" type="text" class="text_pole" placeholder="empty = active book(s) from ST's dropdown">
+        </div>
+        <div class="arb_hint">World Info activates like ST does — constant ("blue-circle") entries always, keyword/selective entries when their words appear in your action or the recent story. Vector-only entries (no keywords) aren't activated here; ask if you want true vector search. Leave Lorebook(s) empty to auto-use your active book(s), or pin specific ones by name (comma-separated).</div>
+        <div class="arb_row">
           <label class="checkbox_label"><input id="arb_adjfull" type="checkbox"><span>Feed the whole chat (budgeted) instead of last N</span></label>
         </div>
         <div class="arb_row">
@@ -3325,6 +3439,8 @@
         $('#arb_ctx').val(s.ctxMsgs);
         $('#arb_adjmem').prop('checked', !!s.adjIncludeMemory);
         $('#arb_adjcard').prop('checked', !!s.adjIncludeCard);
+        $('#arb_adjworld').prop('checked', !!s.adjIncludeWorld);
+        $('#arb_adjworldbooks').val(s.adjWorldBooks || '');
         $('#arb_adjfull').prop('checked', !!s.adjFullChat);
         $('#arb_adjhidden').prop('checked', !!s.adjIncludeHidden);
         $('#arb_adjctxk').val(s.adjContextK);
@@ -3401,6 +3517,8 @@
         $('#arb_ctx').val(s.ctxMsgs).on('input', function () { s.ctxMsgs = clamp(this.value, 1, 10); saveSettings(); });
         $('#arb_adjmem').prop('checked', !!s.adjIncludeMemory).on('change', function () { s.adjIncludeMemory = this.checked; saveSettings(); });
         $('#arb_adjcard').prop('checked', !!s.adjIncludeCard).on('change', function () { s.adjIncludeCard = this.checked; saveSettings(); });
+        $('#arb_adjworld').prop('checked', !!s.adjIncludeWorld).on('change', function () { s.adjIncludeWorld = this.checked; saveSettings(); });
+        $('#arb_adjworldbooks').val(s.adjWorldBooks || '').on('input', function () { s.adjWorldBooks = this.value; saveSettings(); });
         $('#arb_adjfull').prop('checked', !!s.adjFullChat).on('change', function () { s.adjFullChat = this.checked; saveSettings(); });
         $('#arb_adjhidden').prop('checked', !!s.adjIncludeHidden).on('change', function () { s.adjIncludeHidden = this.checked; saveSettings(); });
         $('#arb_adjctxk').val(s.adjContextK).on('input', function () { s.adjContextK = clamp(this.value, 4, 500); saveSettings(); });
@@ -3495,6 +3613,7 @@
             const when = new Date(L.when).toLocaleTimeString();
             const flags = 'memory:' + (L.rich.memory ? 'ON' : 'off')
                 + ' · card:' + (L.rich.card ? 'ON' : 'off')
+                + ' · world:' + (L.rich.world ? 'ON' : 'off')
                 + ' · whole-chat:' + (L.rich.fullChat ? 'ON (' + L.rich.ctxK + 'K budget)' : 'off (last ' + L.rich.ctxMsgs + ' msgs)')
                 + ' · hidden:' + (L.rich.hidden ? 'ON' : 'off');
             const text = '=== LAST CHECK · ' + L.mode + ' · ' + when + ' · ' + L.chars + ' chars total ===\n'
