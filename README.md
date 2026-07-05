@@ -228,6 +228,15 @@ Deliberate boundary: Arbiter owns the **dice** of the background world.
 Character *state* (personalities, relationships, who knows what) belongs to
 your character-ledger tooling — one source of truth each.
 
+## Reset & inspection
+
+**Reset settings** restores every knob to factory defaults (asks first).
+**Reset chat data** wipes the current chat's sheet, threads, log, fights and
+caches — auto-seed rebuilds the sheet on its own (asks first). **Memory
+sources** shows exactly which memory injections the seeder reads right now
+(Summaryception snippets and recall, the character ledger, notepads, and the
+Author's Note), so coverage is verifiable, not assumed.
+
 ## Thinking models
 
 The adjudicator profile works with thinking models — the JSON parser scans

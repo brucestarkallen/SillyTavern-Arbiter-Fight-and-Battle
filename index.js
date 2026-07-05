@@ -276,7 +276,7 @@
         probFromDelta, sliceOutcome, rngFloat, TIERS, TIER_RATINGS,
         PRESETS, EXCHANGE_EFFECTS, applyExchangeEffects, poiseWord,
         rollEventTick, rollTier, tickThread, ENGINE_DEFAULTS,
-        EVENT_TYPES, ENCOUNTER_TYPES, extractJsonCandidates,
+        EVENT_TYPES, ENCOUNTER_TYPES, extractJsonCandidates, collectMemoryBlock,
     };
 
     /* ------------------------------------------------------------------ */
@@ -304,7 +304,7 @@
         enabled: true,
         profileId: '',            // Connection Manager profile for the adjudicator
         timeoutMs: 6000,          // hard budget for the micro-call; on expiry: skip
-        ctxMsgs: 4,               // recent messages given to the adjudicator
+        ctxMsgs: 6,               // recent messages given to the adjudicator
         sensitivity: 'normal',    // conservative | normal | aggressive
         injectDepth: 0,
         injectRole: 'system',     // system | user | assistant
@@ -318,7 +318,7 @@
         preset: 'realistic',      // gritty | realistic | heroic
         autoDuel: true,           // let the adjudicator open/close duels from the fiction
         autoBattle: true,         // let the adjudicator open group battles from the fiction
-        eventEngine: false,       // ambient escalating random events (pity-timer RNG)
+        eventEngine: true,        // ambient escalating random events (pity-timer RNG)
         autoSeed: true,           // background sheet/thread seeding — no commands needed
         autoSeedEvery: 50,        // re-read story+memory every N turns to learn new faces
         encounterTypes: '',       // comma list overriding built-in encounter hooks ('' = defaults)
@@ -938,6 +938,33 @@
         return queue[0].text;
     }
 
+    /** Gather everything the memory stack currently injects: Summaryception
+     *  snippets/recall, Continuity Copilot's character ledger, notepads,
+     *  lore/plot keys, and the Author's Note. Returns block + source list. */
+    function collectMemoryBlock(limitChars) {
+        const sources = [];
+        const chunks = [];
+        try {
+            const c = ctx();
+            const eps = c.extensionPrompts || c.extension_prompts || {};
+            const memRe = /summar|ception|memory|qvink|notepad|ledger|lore|plot/i;
+            for (const [k, v] of Object.entries(eps)) {
+                const val = v && typeof v === 'object' ? v.value : v;
+                if (memRe.test(k) && typeof val === 'string' && val.trim()) {
+                    chunks.push(val.trim());
+                    sources.push({ key: k, chars: val.trim().length });
+                }
+            }
+            const md = c.chatMetadata || c.chat_metadata || {};
+            if (typeof md.note_prompt === 'string' && md.note_prompt.trim()) {
+                chunks.push(md.note_prompt.trim());
+                sources.push({ key: "author's note", chars: md.note_prompt.trim().length });
+            }
+        } catch (e) { dlog('memory gather failed', e); }
+        const block = chunks.length ? '<memory>\n' + chunks.join('\n---\n').slice(0, limitChars || 5000) + '\n</memory>' : '';
+        return { block, sources };
+    }
+
     const THREAD_SEED_SYSTEM = [
         'You read a roleplay transcript plus its memory notes and propose BACKGROUND CURRENTS: off-screen storylines that should advance on their own (a rival\'s scheme, an investigation closing in, a faction\'s move, an NPC\'s ambition). Output STRICT JSON only, one object, no markdown.',
         '',
@@ -962,19 +989,9 @@
             chars += line.length;
             parts.push(line);
         }
-        let memoryBlock = '';
-        try {
-            const eps = c.extensionPrompts || c.extension_prompts || {};
-            const memRe = /summar|ception|memory|qvink|notepad/i;
-            const chunks = [];
-            for (const [k, v] of Object.entries(eps)) {
-                const val = v && typeof v === 'object' ? v.value : v;
-                if (memRe.test(k) && typeof val === 'string' && val.trim()) chunks.push(val.trim());
-            }
-            if (chunks.length) memoryBlock = '<memory>\n' + chunks.join('\n---\n').slice(0, 4000) + '\n</memory>\n\n';
-        } catch (e) { /* fine */ }
+        const mem = collectMemoryBlock(4000);
         const existing = meta.threads.map(t => t.name).join(', ') || 'none';
-        const out = await callLLM(THREAD_SEED_SYSTEM, memoryBlock + '<existing_threads>' + existing + '</existing_threads>\n\n<transcript>\n' + parts.reverse().join('\n') + '\n</transcript>', 700, 45000);
+        const out = await callLLM(THREAD_SEED_SYSTEM, (mem.block ? mem.block + '\n\n' : '') + '<existing_threads>' + existing + '</existing_threads>\n\n<transcript>\n' + parts.reverse().join('\n') + '\n</transcript>', 700, 45000);
         let obj = null;
         for (const cand of extractJsonCandidates(out, 5)) {
             if (cand && Array.isArray(cand.threads)) { obj = cand; break; }
@@ -1655,24 +1672,10 @@
         }
         const existing = JSON.stringify(meta.sheet || { actors: {} });
 
-        // Memory-aware seeding: include what the memory extensions inject
-        // (Summaryception snippets, notepads, Author's Note), so ratings can
-        // draw on established canon, not just the recent transcript.
-        let memoryBlock = '';
-        try {
-            const eps = c.extensionPrompts || c.extension_prompts || {};
-            const memRe = /summar|ception|memory|qvink|notepad/i;
-            const chunks = [];
-            for (const [k, v] of Object.entries(eps)) {
-                const val = v && typeof v === 'object' ? v.value : v;
-                if (memRe.test(k) && typeof val === 'string' && val.trim()) chunks.push(val.trim());
-            }
-            const md = c.chatMetadata || c.chat_metadata || {};
-            if (typeof md.note_prompt === 'string' && md.note_prompt.trim()) chunks.push(md.note_prompt.trim());
-            if (chunks.length) memoryBlock = '\n\n<memory>\n' + chunks.join('\n---\n').slice(0, 5000) + '\n</memory>';
-        } catch (e) { dlog('memory gather for seeding failed', e); }
-
-        const userPrompt = '<existing_sheet>\n' + existing + '\n</existing_sheet>' + memoryBlock + '\n\n<transcript>\n' +
+        // Memory-aware seeding: everything the memory stack injects
+        // (Summaryception, ledger, notepads, Author's Note) + the transcript.
+        const mem = collectMemoryBlock(5000);
+        const userPrompt = '<existing_sheet>\n' + existing + '\n</existing_sheet>' + (mem.block ? '\n\n' + mem.block : '') + '\n\n<transcript>\n' +
             parts.reverse().join('\n') + '\n</transcript>';
 
         const out = await callLLM(SEED_SYSTEM, userPrompt, 800, 45000);
@@ -1862,6 +1865,13 @@
       </div>
       <div class="arb_hint">Force next / Skip next: one-shot flags for your NEXT message — same as /arb and /arbskip. Seed: the referee reads the recent story and drafts the sheet below.</div>
 
+      <div class="arb_buttons">
+        <div id="arb_memsources" class="menu_button">Memory sources</div>
+        <div id="arb_reset_settings" class="menu_button">Reset settings</div>
+        <div id="arb_reset_chat" class="menu_button">Reset chat data</div>
+      </div>
+      <div class="arb_hint">Memory sources: shows exactly which memory injections the seeder reads right now (Summaryception, ledger, notepads, Author's Note). Reset settings: every knob back to factory defaults (asks first). Reset chat data: wipes THIS chat's sheet, threads, log, fights and caches — auto-seed rebuilds the sheet by itself (asks first).</div>
+
       <hr>
       <b>Capability sheet (per chat)</b>
       <div class="arb_hint">JSON: {"actors": {"Name": {"default": 6, "domains": {"melee": 7}}}}. Ratings 0-10 · scale: 2 untrained · 4 trained · 5 pro · 6 veteran · 7 elite · 8 master · 9 legendary. Unknown actors/domains fall back to default.</div>
@@ -2016,6 +2026,67 @@
         } catch (e) { /* the HUD must never break anything */ }
     }
 
+    function applySettingsToUI() {
+        const s = getSettings();
+        $('#arb_enabled').prop('checked', !!s.enabled);
+        $('#arb_toast').prop('checked', !!s.toastResults);
+        $('#arb_showmath').prop('checked', !!s.showMath);
+        $('#arb_debug').prop('checked', !!s.debug);
+        $('#arb_timeout').val(s.timeoutMs);
+        $('#arb_ctx').val(s.ctxMsgs);
+        $('#arb_sens').val(s.sensitivity);
+        $('#arb_defrating').val(s.defaultRating);
+        $('#arb_depth').val(s.injectDepth);
+        $('#arb_role').val(s.injectRole);
+        $('#arb_forcetag').val(s.forceTag);
+        $('#arb_skiptag').val(s.skipTag);
+        $('#arb_verbs').val(s.verbs);
+        $('#arb_enctypes').val(s.encounterTypes);
+        $('#arb_mode').val(s.mode);
+        $('#arb_preset').val(s.preset);
+        $('#arb_autoduel').prop('checked', !!s.autoDuel);
+        $('#arb_autobattle').prop('checked', !!s.autoBattle);
+        $('#arb_eventengine').prop('checked', !!s.eventEngine);
+        $('#arb_autoseed').prop('checked', !!s.autoSeed);
+        $('#arb_autoseedevery').val(s.autoSeedEvery);
+        $('#arb_showhud').prop('checked', !!s.showHud);
+        $('#arb_poise').val(s.duelPoise);
+        $('#arb_profile').val(s.profileId || '');
+    }
+
+    function resetSettingsToDefaults() {
+        const s = getSettings();
+        for (const k of Object.keys(DEFAULTS)) s[k] = JSON.parse(JSON.stringify(DEFAULTS[k]));
+        saveSettings();
+        applySettingsToUI();
+        renderHud();
+        toast('success', 'All settings restored to factory defaults.');
+    }
+
+    function resetChatData() {
+        const meta = getMeta(); if (!meta) return;
+        meta.sheet = { actors: {} };
+        meta.threads = [];
+        meta.log = [];
+        meta.cache = null;
+        meta.oneShot = null;
+        meta.duel = null;
+        meta.battle = null;
+        delete meta.eventCache;
+        meta.engines = {
+            surprise: { dc: ENGINE_DEFAULTS.surprise.dc0 },
+            encounter: { dc: ENGINE_DEFAULTS.encounter.dc0 },
+            world: { dc: ENGINE_DEFAULTS.world.dc0 },
+        };
+        meta.tickCount = 0;
+        meta.turnCount = 0;
+        meta.lastAutoSeedAt = -999999;
+        saveMeta();
+        renderSheet(); renderThreads(); renderLog(); renderHud();
+        clearInjection();
+        toast('success', 'Chat data wiped. Auto-seed will rebuild the sheet as you play.');
+    }
+
     function bindUI() {
         const s = getSettings();
 
@@ -2087,6 +2158,23 @@
         });
         $('#arb_threads_reload').on('click', renderThreads);
         $('#arb_threads_seed').on('click', () => { seedThreads(); });
+
+        $('#arb_memsources').on('click', () => {
+            const mem = collectMemoryBlock(5000);
+            if (!mem.sources.length) { toast('warning', 'No memory injections detected right now. Open the chat and let your memory extensions inject first.'); return; }
+            const lines = mem.sources.map(x => escHtml(x.key) + ' (' + x.chars + ' chars)').join('<br>');
+            toast('info', lines, 'Seeder reads ' + mem.sources.length + ' source(s)');
+        });
+        $('#arb_reset_settings').on('click', () => {
+            const sure = (typeof confirm === 'function') ? confirm('Reset ALL Arbiter settings to factory defaults?') : true;
+            if (sure) resetSettingsToDefaults();
+        });
+        $('#arb_reset_chat').on('click', () => {
+            const sure = (typeof confirm === 'function') ? confirm('Wipe THIS chat\'s Arbiter data (sheet, threads, log, fights, caches)?') : true;
+            if (sure) resetChatData();
+        });
+
+        applySettingsToUI();
 
         $('#arb_profile').on('change', function () { s.profileId = this.value; saveSettings(); });
         $('#arb_profile_refresh').on('click', refreshProfiles);
