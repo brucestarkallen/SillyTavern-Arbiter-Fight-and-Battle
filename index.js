@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.11.1';
+    const VERSION = '0.15.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
