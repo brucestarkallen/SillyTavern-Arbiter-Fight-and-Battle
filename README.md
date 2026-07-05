@@ -281,6 +281,17 @@ trade drops both fighters at once. Tune frequency with the **Tie window**
 under Outcome feel (0 disables; 0.06 default; higher = more ties); it affects
 only fighting exchanges, never single checks.
 
+## Estimate persistence (v0.11.3)
+
+Round-1 estimates don't just vanish. When a duel ends against an
+estimated-but-unrated opponent, their rating is saved to the sheet as a
+baseline (flagged internally as estimated) so the same foe fights at a stable
+number next time instead of being re-guessed from scratch — this matters when
+auto-seed is off. A later considered seed still overwrites that estimated
+baseline with a proper rating, and any rating YOU edit by hand is never
+touched. Priority is always: your hand-edit > considered seed > persisted
+estimate > fresh estimate > trained fallback.
+
 ## Round-1 opponent estimate (v0.11.2)
 
 No more under-rated opening exchange. When a duel opens against someone not on

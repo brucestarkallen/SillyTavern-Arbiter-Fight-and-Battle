@@ -1545,7 +1545,25 @@
     }
 
     function endDuel(meta, silent) {
-        if (meta && meta.duel) meta.duel = null;
+        if (meta && meta.duel) {
+            // Persist an estimated opponent's rating as a sheet baseline so the
+            // same foe doesn't get re-estimated (and wobble) next encounter.
+            // Flagged _estimated so a considered seed can still overwrite it.
+            try {
+                const d = meta.duel;
+                if (d.opp && d.opp.estimated && d.opp.name && !findActor(meta, d.opp.name)) {
+                    meta.sheet = meta.sheet || { actors: {} };
+                    meta.sheet.actors[d.opp.name] = {
+                        default: clamp(d.opp.rating, 0, 10),
+                        domains: { [d.domain || 'melee']: clamp(d.opp.rating, 0, 10) },
+                        _estimated: true,
+                    };
+                    dlog('persisted estimated opponent', d.opp.name, 'at', d.opp.rating, 'as sheet baseline');
+                }
+            } catch (e) { /* non-fatal */ }
+            meta.duel = null;
+            saveMeta();
+        }
         renderHud();
         if (!silent) toast('info', 'Duel ended.');
     }
@@ -2324,7 +2342,7 @@
                 const dk = String(d).toLowerCase().trim();
                 if (dk) clean.domains[dk] = clamp(v, 0, 10);
             }
-            if (o.auto && existing) {
+            if (o.auto && existing && !existing._estimated) {
                 // Auto refresh NEVER overwrites ratings you may have tuned —
                 // it only fills in domains the actor didn't have yet.
                 for (const [dk, dv] of Object.entries(clean.domains)) {
@@ -2335,6 +2353,7 @@
                 }
                 continue;
             }
+            // A fresh considered rating replaces a prior estimated baseline.
             meta.sheet.actors[key] = clean;
             added++;
         }
