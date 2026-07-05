@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.17.0';
+    const VERSION = '0.18.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -409,7 +409,7 @@
         EVENT_TYPES, ENCOUNTER_TYPES, extractJsonCandidates, collectMemoryBlock,
         STRATAGEM_EFFECTS, tieCheck, ratingFor, composurePenalty, applyComposureChange,
         looksLikeRecovery, combatantComposurePenalty, applyMoraleShock, passiveComposureRecovery,
-        compactRecent, budgetedTranscript, buildAdjUserPrompt, getLastAdj: () => LAST_ADJ,
+        compactRecent, budgetedTranscript, buildAdjUserPrompt, collectStoryContext, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -448,6 +448,7 @@
         // ── Referee context payload (all opt-in; the referee ALWAYS uses its own
         //    neutral system prompt, never SillyTavern's, so that is never included) ──
         adjIncludeMemory: false,  // feed the full memory stack (Summaryception, ledger, notepad, lore, Author's Note) into EVERY check
+        adjIncludeCard: false,    // feed the active character card's descriptive fields (description, personality, scenario) into EVERY check
         adjFullChat: false,       // feed a large budgeted transcript instead of just the last ctxMsgs messages
         adjContextK: 40,          // transcript budget in thousands of chars when adjFullChat is on
         adjIncludeHidden: false,  // include ST-hidden ("ghosted") messages too (Arbiter's own directives are always excluded)
@@ -796,7 +797,8 @@
             : compactRecent(chat, clamp(s.ctxMsgs, 1, 10), lastUserMes, !!s.adjIncludeHidden);
         const action = String(lastUserMes.mes).slice(0, 700);
         const memBlock = s.adjIncludeMemory ? collectMemoryBlock(clamp(s.adjContextK, 4, 500) * 1000).block : '';
-        return '<player>\nThe player character is "' + playerName + '". The text in <action> is written BY the player: "I" and second-person "you" in it both mean ' + playerName + ' acting. The storyteller\'s messages in <recent> may be labeled with a card/narrator name that is NOT a combatant.\n</player>\n\n<sheet>\n' + sheet + '\n</sheet>\n\n' + (memBlock ? memBlock + '\n\n' : '') + '<recent>\n' + recent + '\n</recent>\n\n<action>\n' + action + '\n</action>';
+        const cardBlock = s.adjIncludeCard ? collectStoryContext(clamp(s.adjContextK, 4, 500) * 1000) : '';
+        return '<player>\nThe player character is "' + playerName + '". The text in <action> is written BY the player: "I" and second-person "you" in it both mean ' + playerName + ' acting. The storyteller\'s messages in <recent> may be labeled with a card/narrator name that is NOT a combatant.\n</player>\n\n<sheet>\n' + sheet + '\n</sheet>\n\n' + (cardBlock ? cardBlock + '\n\n' : '') + (memBlock ? memBlock + '\n\n' : '') + '<recent>\n' + recent + '\n</recent>\n\n<action>\n' + action + '\n</action>';
     }
 
     function normalizeAdj(obj) {
@@ -1548,6 +1550,39 @@
         } catch (e) { dlog('memory gather failed', e); }
         const block = chunks.length ? '<memory>\n' + chunks.join('\n---\n').slice(0, limitChars || 5000) + '\n</memory>' : '';
         return { block, sources };
+    }
+
+    /** Descriptive fields from the active character card (name, description,
+     *  personality, scenario) for the referee, when the user opts in. Best-effort
+     *  and defensive: a missing field or a different context shape yields an empty
+     *  block, never an error — the inspector lets the user confirm it actually
+     *  pulled on their build. Instruction-type fields (main-prompt override,
+     *  post-history instructions) are deliberately NOT included: like the system
+     *  prompt they are bias vectors, not physical facts. Persona is never
+     *  included by design. */
+    function collectStoryContext(limitChars) {
+        try {
+            const c = ctx();
+            const chid = (c.characterId !== undefined && c.characterId !== null) ? c.characterId
+                : (c.this_chid !== undefined ? c.this_chid : null);
+            const list = c.characters || [];
+            const ch = (chid !== null && chid !== undefined && list[chid]) ? list[chid] : null;
+            if (!ch) return '';
+            const data = ch.data || {};
+            const pick = (a, b) => {
+                const v = (a !== undefined && a !== null && String(a).trim()) ? a : b;
+                return (v !== undefined && v !== null) ? String(v).trim() : '';
+            };
+            const fields = [
+                ['Name', pick(ch.name, data.name)],
+                ['Description', pick(ch.description, data.description)],
+                ['Personality', pick(ch.personality, data.personality)],
+                ['Scenario', pick(ch.scenario, data.scenario)],
+            ].filter(([, v]) => v);
+            if (!fields.length) return '';
+            const body = fields.map(([k, v]) => k + ': ' + v).join('\n').slice(0, limitChars || 5000);
+            return '<character_card>\n' + body + '\n</character_card>';
+        } catch (e) { dlog('story context gather failed', e); return ''; }
     }
 
     /** Harvest a rough roster of named characters from memory + the existing
@@ -2392,7 +2427,7 @@
             // Capture verbatim for the inspector so the user can read exactly what
             // the referee sees (mode, both halves of the prompt, size).
             LAST_ADJ = { when: Date.now(), mode: inDuel ? 'duel' : (inWar ? 'war' : (inBattle ? 'battle' : 'check')),
-                rich: { memory: !!s.adjIncludeMemory, fullChat: !!s.adjFullChat, hidden: !!s.adjIncludeHidden, ctxK: s.adjContextK, ctxMsgs: s.ctxMsgs },
+                rich: { memory: !!s.adjIncludeMemory, card: !!s.adjIncludeCard, fullChat: !!s.adjFullChat, hidden: !!s.adjIncludeHidden, ctxK: s.adjContextK, ctxMsgs: s.ctxMsgs },
                 system: sysPrompt, user: userPrompt, chars: sysPrompt.length + userPrompt.length };
 
             let rawOut = await callLLM(sysPrompt, userPrompt, 260, budget);
@@ -2840,9 +2875,12 @@
         </div>
         <div class="arb_hint">Timeout: max wait for the referee — on expiry the turn proceeds with no check. Context msgs: how much recent story the referee reads to judge circumstance (lean mode).</div>
         <b>Referee context payload</b>
-        <div class="arb_hint">By default the referee reads a lean slice (the sheet + the last few messages). These OPT-IN toggles widen what it sees. Its own neutral system prompt is always used — SillyTavern's system prompt is never included. Wider context is slower and costs more tokens per check; raise the timeout if checks start expiring.</div>
+        <div class="arb_hint">By default the referee reads a lean slice (the sheet + the last few messages). These OPT-IN toggles widen what it sees. Its own neutral system prompt is always used, and SillyTavern's system prompt and your persona are NEVER included (they bias the judge). Wider context is slower and costs more tokens per check; raise the timeout if checks start expiring. Note: the character card is where "unbeatable protagonist" framing usually lives — the sheet already distils capability into neutral ratings, so enable the card only if you want the referee reading raw card text, and watch the effect with "View last check".</div>
         <div class="arb_row">
           <label class="checkbox_label"><input id="arb_adjmem" type="checkbox"><span>Include full memory (Summaryception, ledger, notes)</span></label>
+        </div>
+        <div class="arb_row">
+          <label class="checkbox_label"><input id="arb_adjcard" type="checkbox"><span>Include character card (description, personality, scenario)</span></label>
         </div>
         <div class="arb_row">
           <label class="checkbox_label"><input id="arb_adjfull" type="checkbox"><span>Feed the whole chat (budgeted) instead of last N</span></label>
@@ -3286,6 +3324,7 @@
         $('#arb_timeout').val(s.timeoutMs);
         $('#arb_ctx').val(s.ctxMsgs);
         $('#arb_adjmem').prop('checked', !!s.adjIncludeMemory);
+        $('#arb_adjcard').prop('checked', !!s.adjIncludeCard);
         $('#arb_adjfull').prop('checked', !!s.adjFullChat);
         $('#arb_adjhidden').prop('checked', !!s.adjIncludeHidden);
         $('#arb_adjctxk').val(s.adjContextK);
@@ -3361,6 +3400,7 @@
         $('#arb_timeout').val(s.timeoutMs).on('input', function () { s.timeoutMs = clamp(this.value, 1500, 60000); saveSettings(); });
         $('#arb_ctx').val(s.ctxMsgs).on('input', function () { s.ctxMsgs = clamp(this.value, 1, 10); saveSettings(); });
         $('#arb_adjmem').prop('checked', !!s.adjIncludeMemory).on('change', function () { s.adjIncludeMemory = this.checked; saveSettings(); });
+        $('#arb_adjcard').prop('checked', !!s.adjIncludeCard).on('change', function () { s.adjIncludeCard = this.checked; saveSettings(); });
         $('#arb_adjfull').prop('checked', !!s.adjFullChat).on('change', function () { s.adjFullChat = this.checked; saveSettings(); });
         $('#arb_adjhidden').prop('checked', !!s.adjIncludeHidden).on('change', function () { s.adjIncludeHidden = this.checked; saveSettings(); });
         $('#arb_adjctxk').val(s.adjContextK).on('input', function () { s.adjContextK = clamp(this.value, 4, 500); saveSettings(); });
@@ -3454,6 +3494,7 @@
             const L = LAST_ADJ;
             const when = new Date(L.when).toLocaleTimeString();
             const flags = 'memory:' + (L.rich.memory ? 'ON' : 'off')
+                + ' · card:' + (L.rich.card ? 'ON' : 'off')
                 + ' · whole-chat:' + (L.rich.fullChat ? 'ON (' + L.rich.ctxK + 'K budget)' : 'off (last ' + L.rich.ctxMsgs + ' msgs)')
                 + ' · hidden:' + (L.rich.hidden ? 'ON' : 'off');
             const text = '=== LAST CHECK · ' + L.mode + ' · ' + when + ' · ' + L.chars + ' chars total ===\n'

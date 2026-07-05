@@ -367,18 +367,25 @@ But you can now **opt into a wider payload** per check, with granular toggles
   Copilot ledger, notepads, lore, Author's Note) into *every* check, not just at
   seed time. Useful when a decisive fact lives in memory rather than the recent
   messages.
+- **Include character card** (v0.18) — feeds the active card's *descriptive*
+  fields (name, description, personality, scenario) into every check. Deliberately
+  excludes the card's instruction-type fields (main-prompt override,
+  post-history instructions) — like the system prompt, those are bias vectors,
+  not physical facts.
 - **Feed the whole chat (budgeted)** — replaces the last-N slice with as much of
   the transcript as fits a char budget, at fuller width than the lean clip.
 - **Include hidden ("ghosted") messages** — surfaces messages you've hidden from
   the story so the referee sees the complete picture.
-- **Context budget (K chars)** — the ceiling for the transcript and the memory
-  block.
+- **Context budget (K chars)** — the ceiling for the transcript, the memory
+  block, and the card.
 
-Two things are deliberate and permanent here: the referee **always** uses its
-own impartial system prompt — SillyTavern's system prompt is *never* included
-(that's the main "make it fun for the hero" bias vector, and keeping it out is
-what makes the judge neutral). And **Arbiter's own injected directives are never
-fed back** to the referee — it never grades its own past output.
+Two exclusions are permanent and deliberate: SillyTavern's **system prompt** and
+your **user persona** are *never* sent to the referee. Both are where "make it
+fun for the hero / I am the chosen one" framing lives, and keeping them out is
+what makes the judge neutral. And **Arbiter's own injected directives are never
+fed back** to the referee — it never grades its own past output. (World-info /
+lorebook inclusion isn't wired yet — it needs an async lorebook read and a
+version-specific accessor; ask if you want it.)
 
 A word of honesty on the trade-off: wider context is slower and costs more
 tokens on every check, and dumping tens of thousands of tokens into a small
