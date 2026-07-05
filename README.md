@@ -228,6 +228,18 @@ Deliberate boundary: Arbiter owns the **dice** of the background world.
 Character *state* (personalities, relationships, who knows what) belongs to
 your character-ledger tooling — one source of truth each.
 
+## Combat HUD (v0.9)
+
+Duels and battles show a floating HUD with two combatant cells: a colored
+initial disc, name, live glyphs (▲ momentum, ✚ injuries, ◹ opening), a
+tabular poise readout, and a gradient bar that shifts green → amber → red
+with health and pulses when a side is nearly broken. A gold round badge
+counts exchanges; victory shows a glowing banner. Battles show aggregate
+side strength with standing counts (3/3 vs 2/4) plus your own poise chip.
+Bars animate smoothly between rounds. Any attack on a named person now opens
+a duel — even a quick or lopsided one — so you always get the bars when
+steel (or ice) crosses.
+
 ## Activity indicator (v0.8)
 
 Whenever Arbiter is doing background work — seeding the sheet, building

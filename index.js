@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.8.2';
+    const VERSION = '0.9.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -621,7 +621,7 @@
         ' "circumstance": <integer -3..3>,',
         ' "why": "<one short clause justifying circumstance>",',
         ' "stakes": "<what success or failure means here, one short clause>",',
-        ' "duel_start": null | "<opponent name — ONLY if this action clearly initiates sustained ONE-ON-ONE combat between the actor and that opponent right now>",',
+        ' "duel_start": null | "<opponent name — set this whenever the action opens physical combat against ONE named person: a strike, a draw, a lunge, an attack with a weapon or power, even if you expect it to be quick or one-sided. When in doubt between a single check and a duel for an attack on a person, prefer the duel.>",',
         ' "battle_start": null | {"allies": ["<name>", ...], "enemies": ["<name or Bandit x3>", ...]} — ONLY if GROUP combat (2+ combatants on at least one side) clearly begins right now; list combatants by name, allies EXCLUDING the player character}',
         '',
         'Rules:',
@@ -2129,13 +2129,29 @@
     /* Duel HUD — floating round/poise bars                                */
     /* ------------------------------------------------------------------ */
 
-    function hudBar(side, cls) {
+    function poiseTone(pct) {
+        if (pct > 60) return 'hi';
+        if (pct > 30) return 'mid';
+        return 'lo';
+    }
+
+    function combatantCell(side, sideCls) {
         const pct = Math.max(0, Math.min(100, Math.round((Math.max(0, side.poise) / side.maxPoise) * 100)));
-        const mom = side.momentum > 0 ? ' ▲' : '';
-        const inj = side.injuries > 0 ? ' ✚' + side.injuries : '';
-        return '<span class="arb_hud_name">' + escHtml(side.name) + mom + inj + '</span>' +
-            '<span class="arb_hud_bar ' + cls + '"><span style="width:' + pct + '%"></span></span>' +
-            '<span class="arb_hud_val">' + Math.max(0, side.poise) + '/' + side.maxPoise + '</span>';
+        const initial = escHtml((side.name || '?').trim().charAt(0).toUpperCase() || '?');
+        const glyphs =
+            (side.momentum > 0 ? '<span class="arb_g arb_g_mom" title="momentum">▲</span>' : '') +
+            (side.injuries > 0 ? '<span class="arb_g arb_g_inj" title="' + side.injuries + ' injury">✚' + (side.injuries > 1 ? side.injuries : '') + '</span>' : '') +
+            (side.opening ? '<span class="arb_g arb_g_open" title="opening">◹</span>' : '');
+        const low = pct <= 30 && pct > 0 ? ' arb_low' : '';
+        return '' +
+            '<div class="arb_cell ' + sideCls + '">' +
+              '<div class="arb_disc ' + sideCls + '">' + initial + '</div>' +
+              '<div class="arb_cellmain">' +
+                '<div class="arb_cellrow"><span class="arb_cname">' + escHtml(side.name) + '</span>' + glyphs +
+                  '<span class="arb_cnum">' + (Math.round(Math.max(0, side.poise) * 10) / 10) + '<span class="arb_cmax">/' + side.maxPoise + '</span></span></div>' +
+                '<div class="arb_track"><div class="arb_fill ' + poiseTone(pct) + low + '" style="width:' + pct + '%"></div></div>' +
+              '</div>' +
+            '</div>';
     }
 
     let _lastHudHtml = '';
@@ -2229,29 +2245,52 @@
             }
             if (battle && battle.active) {
                 const mc = battle.allies.find(u => u.isPlayer) || battle.allies[0];
-                const sideBar = (units, cls) => {
+                const sideAgg = (units) => {
                     const cur = standing(units).reduce((t, u) => t + Math.max(0, u.poise), 0);
                     const max = units.reduce((t, u) => t + u.maxPoise, 0) || 1;
-                    const pct = Math.max(0, Math.min(100, Math.round((cur / max) * 100)));
-                    return '<span class="arb_hud_bar ' + cls + '"><span style="width:' + pct + '%"></span></span>';
+                    return { pct: Math.max(0, Math.min(100, Math.round((cur / max) * 100))), up: standing(units).length, total: units.length };
                 };
-                const status = battle.over
-                    ? '<b class="arb_hud_over">' + (battle.victor === 'allies' ? 'ALLIES WIN' : 'ENEMIES WIN') + '</b>'
-                    : '<b>R' + battle.round + '</b>';
-                setHudHtml(el, status +
-                    ' <span class="arb_hud_name">Allies ' + standing(battle.allies).length + '/' + battle.allies.length + '</span>' + sideBar(battle.allies, 'pl') +
-                    '<span class="arb_hud_vs">⚔</span>' + sideBar(battle.enemies, 'op') +
-                    '<span class="arb_hud_name">' + standing(battle.enemies).length + '/' + battle.enemies.length + ' Enemies</span>' +
-                    '<span class="arb_hud_val">· ' + escHtml(mc.name) + ' ' + Math.max(0, mc.poise) + '/' + mc.maxPoise + (mc.injuries ? ' ✚' + mc.injuries : '') + '</span>' +
-                    '<span class="arb_hud_x" title="End battle">✕</span>');
+                const A = sideAgg(battle.allies), E = sideAgg(battle.enemies);
+                const aCell = {
+                    name: 'Allies', poise: A.pct, maxPoise: 100,
+                    momentum: standing(battle.allies).some(u => u.momentum > 0) ? 1 : 0,
+                    injuries: 0, opening: false,
+                };
+                const eCell = {
+                    name: 'Enemies', poise: E.pct, maxPoise: 100,
+                    momentum: standing(battle.enemies).some(u => u.momentum > 0) ? 1 : 0,
+                    injuries: 0, opening: false,
+                };
+                const badge = battle.over
+                    ? '<div class="arb_badge_over">' + (battle.victor === 'allies' ? 'ALLIES WIN' : 'ENEMIES WIN') + '</div>'
+                    : '<div class="arb_rbadge">R' + battle.round + '</div>';
+                const counts = '<div class="arb_counts">' + A.up + '/' + A.total + ' vs ' + E.up + '/' + E.total + '</div>';
+                setHudHtml(el,
+                    '<div class="arb_hud_inner">' +
+                      '<div class="arb_hud_top">' + badge + counts +
+                        '<span class="arb_hud_x" title="End battle">✕</span></div>' +
+                      '<div class="arb_hud_body">' +
+                        combatantCell(aCell, 'pl') +
+                        '<div class="arb_vs">VS</div>' +
+                        combatantCell(eCell, 'op') +
+                      '</div>' +
+                      '<div class="arb_mc">' + escHtml(mc.name) + ' · ' + (Math.round(Math.max(0, mc.poise) * 10) / 10) + '/' + mc.maxPoise + (mc.injuries ? ' ✚' + mc.injuries : '') + '</div>' +
+                    '</div>');
                 return;
             }
-            const status = duel.over
-                ? '<b class="arb_hud_over">' + escHtml((duel.victor === 'player' ? duel.player.name : duel.opp.name)) + ' WINS</b>'
-                : '<b>R' + duel.round + '</b>';
-            setHudHtml(el, status + ' ' + hudBar(duel.player, 'pl') +
-                '<span class="arb_hud_vs">⚔</span>' + hudBar(duel.opp, 'op') +
-                '<span class="arb_hud_x" title="End duel">✕</span>');
+            const badge = duel.over
+                ? '<div class="arb_badge_over">' + escHtml((duel.victor === 'player' ? duel.player.name : duel.opp.name)) + ' WINS</div>'
+                : '<div class="arb_rbadge">R' + duel.round + '</div>';
+            setHudHtml(el,
+                '<div class="arb_hud_inner">' +
+                  '<div class="arb_hud_top">' + badge +
+                    '<span class="arb_hud_x" title="End duel">✕</span></div>' +
+                  '<div class="arb_hud_body">' +
+                    combatantCell(duel.player, 'pl') +
+                    '<div class="arb_vs">VS</div>' +
+                    combatantCell(duel.opp, 'op') +
+                  '</div>' +
+                '</div>');
         } catch (e) { /* the HUD must never break anything */ }
     }
 
