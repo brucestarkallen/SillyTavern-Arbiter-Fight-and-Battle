@@ -228,6 +228,25 @@ Deliberate boundary: Arbiter owns the **dice** of the background world.
 Character *state* (personalities, relationships, who knows what) belongs to
 your character-ledger tooling — one source of truth each.
 
+## Panel layout (v0.7)
+
+The settings drawer is grouped into collapsible sections — **Core** (switch,
+profile, timeout, gate, auto-seed), **Outcome feel** (mode, preset),
+**Combat**, **Background world** (engines, encounter table, threads),
+**Data & tools** (seeds, memory sources, resets, sheet), **Advanced**
+(injection, tags, verbs), and the **log** — with a live status bar on top
+showing at a glance: active/disabled, which adjudicator profile is wired
+(amber warning when falling back to the raw API), mode · preset, and this
+chat's actor/thread counts.
+
+## Tests
+
+`tests/` contains nine suites covering every invariant: the probability
+curve, tier slicing per preset, exchange effects, full battles to
+conclusion, snapshot rewinds, event tiers, thread ladders, memory-collector
+coverage, and gate behavior. Run them with Node (no dependencies):
+`sh tests/run_all.sh`. Any future change should keep them green.
+
 ## Reset & inspection
 
 **Reset settings** restores every knob to factory defaults (asks first).

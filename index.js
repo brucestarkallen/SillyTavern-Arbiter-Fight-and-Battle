@@ -22,6 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
+    const VERSION = '0.7.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -571,11 +572,11 @@
         '- If the opposition is a character present in the sheet, use their name verbatim and opposition_kind "actor".',
     ].join('\n');
 
-    function compactRecent(chat, n) {
+    function compactRecent(chat, n, excludeMes) {
         const out = [];
         for (let i = chat.length - 1; i >= 0 && out.length < n; i--) {
             const m = chat[i];
-            if (!m || !m.mes || m.is_system) continue;
+            if (!m || !m.mes || m.is_system || m === excludeMes) continue;
             const name = m.name || (m.is_user ? 'Player' : 'AI');
             out.push(name + ': ' + String(m.mes).replace(/\s+/g, ' ').slice(0, 300));
         }
@@ -585,7 +586,7 @@
     function buildAdjUserPrompt(chat, lastUserMes, meta) {
         const s = getSettings();
         const sheet = JSON.stringify(meta.sheet || { actors: {} });
-        const recent = compactRecent(chat, clamp(s.ctxMsgs, 1, 10));
+        const recent = compactRecent(chat, clamp(s.ctxMsgs, 1, 10), lastUserMes);
         const action = String(lastUserMes.mes).slice(0, 700);
         return '<sheet>\n' + sheet + '\n</sheet>\n\n<recent>\n' + recent + '\n</recent>\n\n<action>\n' + action + '\n</action>';
     }
@@ -699,7 +700,11 @@
             poise: poiseFor(pEntry, s.duelPoise), maxPoise: poiseFor(pEntry, s.duelPoise),
             injuries: 0, momentum: 0, opening: false, standing: true, isPlayer: true,
         };
-        const allies = buildUnits(meta, (allyNames || []).filter(n => n.toLowerCase() !== playerName.toLowerCase()), d, false);
+        const pn = playerName.toLowerCase();
+        const allies = buildUnits(meta, (allyNames || []).filter(n => {
+            const x = n.toLowerCase();
+            return x !== pn && !x.includes(pn) && !pn.includes(x);
+        }), d, false);
         const enemies = buildUnits(meta, enemyNames || [], d, true);
         if (!enemies.length) return null;
         meta.battle = {
@@ -723,7 +728,8 @@
 
     /** One ally-vs-enemy pairing, from the ally's perspective. Returns a report line. */
     function resolvePairing(a, e, extraDelta, preset) {
-        const delta = clamp((a.rating - a.injuries + a.momentum) - (e.rating - e.injuries + e.momentum) + extraDelta + preset.bonus, -13, 13);
+        const openingBonus = a.opening ? 1 : 0; a.opening = false;
+        const delta = clamp((a.rating - a.injuries + a.momentum + openingBonus) - (e.rating - e.injuries + e.momentum) + extraDelta + preset.bonus, -13, 13);
         const tier = sliceOutcome(probFromDelta(delta), rngFloat(), preset.mods);
         const r = applyExchangeEffects(a, e, tier);
         Object.assign(a, r.player); Object.assign(e, r.opp);
@@ -938,6 +944,7 @@
 
         if (!queue.length) return null;
         queue.sort((x, y) => y.prio - x.prio);
+        for (let i = 1; i < queue.length; i++) dlog('background beat (silent):', queue[i].text);
         return queue[0].text;
     }
 
@@ -982,6 +989,7 @@
         const meta = getMeta();
         if (!meta) { if (!o.auto) toast('warning', 'No chat open.'); return; }
         const chat = c.chat || [];
+        if (!chat.length) { if (!o.auto) toast('warning', 'Chat is empty.'); return; }
         if (!o.auto) toast('info', 'Reading the story for background currents…', 'Arbiter threads');
         const parts = [];
         let chars = 0;
@@ -1765,154 +1773,184 @@
 <div id="arb_settings">
   <div class="inline-drawer">
     <div class="inline-drawer-toggle inline-drawer-header">
-      <b>Arbiter</b>
+      <b>Arbiter</b>&nbsp;<small class="arb_ver">v${VERSION}</small>
       <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
     </div>
     <div class="inline-drawer-content">
-      <div class="arb_row">
-        <label class="checkbox_label"><input id="arb_enabled" type="checkbox"><span>Enabled</span></label>
-        <label class="checkbox_label"><input id="arb_toast" type="checkbox"><span>Toast results</span></label>
-        <label class="checkbox_label"><input id="arb_showmath" type="checkbox"><span>Show math in toast</span></label>
-        <label class="checkbox_label"><input id="arb_debug" type="checkbox"><span>Debug log</span></label>
-      </div>
-      <div class="arb_hint">Master switch · popup per ruling · include the Δ/P math in that popup · verbose console output for debugging.</div>
+      <div id="arb_status" class="arb_status"></div>
 
-      <div class="arb_row">
-        <label>Adjudicator profile</label>
-        <select id="arb_profile" class="text_pole"></select>
-        <div id="arb_profile_refresh" class="menu_button fa-solid fa-rotate" title="Refresh profiles"></div>
-      </div>
-      <div class="arb_hint">Point this at a fast, non-thinking endpoint. Empty = raw call on the current API (slow if your main model thinks).</div>
+      <details class="arb_group" open>
+        <summary><i class="fa-solid fa-sliders"></i> Core</summary>
+        <div class="arb_row">
+          <label class="checkbox_label"><input id="arb_enabled" type="checkbox"><span>Enabled</span></label>
+          <label class="checkbox_label"><input id="arb_toast" type="checkbox"><span>Toast results</span></label>
+          <label class="checkbox_label"><input id="arb_showmath" type="checkbox"><span>Show math</span></label>
+          <label class="checkbox_label"><input id="arb_debug" type="checkbox"><span>Debug</span></label>
+        </div>
+        <div class="arb_hint">Master switch · popup per ruling · include the Δ/P math in that popup · verbose console output.</div>
+        <div class="arb_row">
+          <label>Adjudicator profile</label>
+          <select id="arb_profile" class="text_pole"></select>
+          <div id="arb_profile_refresh" class="menu_button fa-solid fa-rotate" title="Refresh profiles"></div>
+        </div>
+        <div class="arb_hint">Point this at a fast, non-thinking endpoint. Empty = raw call on the current API (slow if your main model thinks).</div>
+        <div class="arb_row">
+          <label>Timeout (ms)</label><input id="arb_timeout" type="number" min="1500" max="60000" step="500" class="text_pole arb_num">
+          <label>Context msgs</label><input id="arb_ctx" type="number" min="1" max="10" class="text_pole arb_num">
+        </div>
+        <div class="arb_hint">Timeout: max wait for the referee — on expiry the turn proceeds with no check. Context msgs: how much recent story the referee reads to judge circumstance.</div>
+        <div class="arb_row">
+          <label>Gate sensitivity</label>
+          <select id="arb_sens" class="text_pole">
+            <option value="conservative">conservative</option>
+            <option value="normal">normal</option>
+            <option value="aggressive">aggressive</option>
+          </select>
+          <label>Default rating</label><input id="arb_defrating" type="number" min="0" max="10" class="text_pole arb_num">
+        </div>
+        <div class="arb_hint">Gate = the free, instant filter deciding if a message even <i>might</i> be a risky attempt. Default rating: skill 0-10 assumed for anyone not on the sheet.</div>
+        <div class="arb_row">
+          <label class="checkbox_label"><input id="arb_autoseed" type="checkbox"><span>Auto seed</span></label>
+          <label>Refresh every</label><input id="arb_autoseedevery" type="number" min="10" max="500" class="text_pole arb_num">
+        </div>
+        <div class="arb_hint">Arbiter builds the capability sheet by itself after a few messages, then quietly re-reads story + memory every N turns — it never overwrites ratings you edited, only adds.</div>
+      </details>
 
-      <div class="arb_row">
-        <label>Timeout (ms)</label><input id="arb_timeout" type="number" min="1500" max="60000" step="500" class="text_pole arb_num">
-        <label>Context msgs</label><input id="arb_ctx" type="number" min="1" max="10" class="text_pole arb_num">
-      </div>
-      <div class="arb_hint">Timeout: max wait for the referee call — on expiry the turn simply proceeds with no check. Context msgs: how many recent messages the referee reads to judge circumstance.</div>
-      <div class="arb_row">
-        <label>Gate sensitivity</label>
-        <select id="arb_sens" class="text_pole">
-          <option value="conservative">conservative</option>
-          <option value="normal">normal</option>
-          <option value="aggressive">aggressive</option>
-        </select>
-        <label>Default rating</label><input id="arb_defrating" type="number" min="0" max="10" class="text_pole arb_num">
-      </div>
-      <div class="arb_hint">Gate = the free, instant filter deciding if a message even <i>might</i> be a risky attempt (conservative: needs try/attempt or 2+ action verbs · normal: any action verb · aggressive: also trailing questions). Default rating: skill 0-10 assumed for anyone not on the sheet.</div>
-      <div class="arb_row">
-        <label>Mode</label>
-        <select id="arb_mode" class="text_pole">
-          <option value="adjudicated">adjudicated</option>
-          <option value="fast">fast</option>
-        </select>
-        <label>Preset</label>
-        <select id="arb_preset" class="text_pole">
-          <option value="gritty">gritty</option>
-          <option value="realistic">realistic</option>
-          <option value="heroic">heroic</option>
-        </select>
-      </div>
-      <div class="arb_hint">Mode: adjudicated = referee micro-call per check (accurate). Fast = zero-latency pre-rolled pool, no referee — the storyteller picks the footing (weaker, use for lag-free sessions). Preset: gritty = harsher tails, costlier wins · realistic = neutral curve · heroic = +1 player edge, halved disasters.</div>
-      <div class="arb_row">
-        <label class="checkbox_label"><input id="arb_autoseed" type="checkbox"><span>Auto seed</span></label>
-        <label>Refresh every</label><input id="arb_autoseedevery" type="number" min="10" max="500" class="text_pole arb_num">
-      </div>
-      <div class="arb_hint">Auto seed: Arbiter builds the capability sheet by itself once the chat has a few messages, then quietly re-reads story + memory every N turns to learn new faces and growth — it NEVER overwrites ratings you edited, only adds. Threads auto-seed too when the Event engine is on. /arbseed still forces a full manual update.</div>
-      <div class="arb_row">
-        <label class="checkbox_label"><input id="arb_autoduel" type="checkbox"><span>Auto duel</span></label>
-        <label class="checkbox_label"><input id="arb_showhud" type="checkbox"><span>Duel HUD</span></label>
-        <label>Default poise</label><input id="arb_poise" type="number" min="1" max="20" class="text_pole arb_num">
-      </div>
-      <div class="arb_hint">Auto duel: the referee opens duels when combat clearly starts and closes them when the fiction ends one. HUD: floating round + poise bars while a duel runs (✕ ends it). Poise: each side's pool — 5 suits people, 6-8 suits mecha Frames; a "poise" key per actor in the sheet overrides this.</div>
-      <div class="arb_row">
-        <label>Duel vs</label><input id="arb_duel_name" type="text" class="text_pole" placeholder="opponent name">
-        <div id="arb_duel_start" class="menu_button">Start duel</div>
-        <div id="arb_duel_end" class="menu_button">End duel</div>
-      </div>
-      <div class="arb_hint">Manual duel controls — same as /duel &lt;name&gt; and /duelend. Ratings and poise come from the sheet; unlisted opponents count as trained.</div>
-      <div class="arb_row">
-        <label class="checkbox_label"><input id="arb_autobattle" type="checkbox"><span>Auto battle</span></label>
-        <label class="checkbox_label"><input id="arb_eventengine" type="checkbox"><span>Event engine</span></label>
-      </div>
-      <div class="arb_hint">Auto battle: the referee opens GROUP fights from the fiction (party vs party, MC vs a gang). Event engine: three escalating pity-timer tiers — Surprise d100 vs 95 (−3/quiet turn, ambient color), Encounter d200 vs 198 (−2, real hooks), World d500 vs 498 (−2, seismic shifts) — plus World Thread heartbeats. The longer nothing happens, the likelier something fires; never during fights; max one hint per turn.</div>
-      <div class="arb_row">
-        <label>Battle</label>
-        <input id="arb_battle_allies" type="text" class="text_pole" placeholder="allies: Stella, Alexia">
-        <input id="arb_battle_enemies" type="text" class="text_pole" placeholder="enemies: Bandit x3, Ogre">
-      </div>
-      <div class="arb_buttons">
-        <div id="arb_battle_start" class="menu_button">Start battle</div>
-        <div id="arb_battle_end" class="menu_button">End battle</div>
-      </div>
-      <div class="arb_hint">Manual battle — same as /battle allies | enemies (e.g. /battle Stella, Alexia | Bandit x3, Ogre). You are added to the allies automatically; "x3" clones a unit; unlisted enemies count as trained. Your turns are scored as a personal fight or a command to the whole side; everyone else auto-resolves each round.</div>
-      <div class="arb_row">
-        <label>Inject depth</label><input id="arb_depth" type="number" min="0" max="99" class="text_pole arb_num">
-        <label>Inject role</label>
-        <select id="arb_role" class="text_pole">
-          <option value="system">system</option>
-          <option value="user">user</option>
-          <option value="assistant">assistant</option>
-        </select>
-      </div>
-      <div class="arb_hint">Where the binding outcome note enters the prompt. Depth 0 + system = very bottom of context, strongest adherence. Leave as-is unless you know why.</div>
-      <div class="arb_row">
-        <label>Force tag</label><input id="arb_forcetag" type="text" class="text_pole arb_num">
-        <label>Skip tag</label><input id="arb_skiptag" type="text" class="text_pole arb_num">
-      </div>
-      <div class="arb_hint">Type these anywhere in a message: force tag guarantees a check on that fresh send, skip tag guarantees none. Both editable.</div>
+      <details class="arb_group">
+        <summary><i class="fa-solid fa-dice"></i> Outcome feel</summary>
+        <div class="arb_row">
+          <label>Mode</label>
+          <select id="arb_mode" class="text_pole">
+            <option value="adjudicated">adjudicated</option>
+            <option value="fast">fast</option>
+          </select>
+          <label>Preset</label>
+          <select id="arb_preset" class="text_pole">
+            <option value="gritty">gritty</option>
+            <option value="realistic">realistic</option>
+            <option value="heroic">heroic</option>
+          </select>
+        </div>
+        <div class="arb_hint">Adjudicated = referee micro-call per check (accurate). Fast = zero-latency pre-rolled pool, storyteller picks the footing (weaker). Preset: gritty = harsher tails · realistic = neutral curve · heroic = +1 player edge, halved disasters.</div>
+      </details>
 
-      <div class="arb_buttons">
-        <div id="arb_btn_force" class="menu_button">Force next</div>
-        <div id="arb_btn_skip" class="menu_button">Skip next</div>
-        <div id="arb_btn_seed" class="menu_button">Seed sheet from story</div>
-      </div>
-      <div class="arb_hint">Force next / Skip next: one-shot flags for your NEXT message — same as /arb and /arbskip. Seed: the referee reads the recent story and drafts the sheet below.</div>
+      <details class="arb_group">
+        <summary><i class="fa-solid fa-shield-halved"></i> Combat — duels &amp; battles</summary>
+        <div class="arb_row">
+          <label class="checkbox_label"><input id="arb_autoduel" type="checkbox"><span>Auto duel</span></label>
+          <label class="checkbox_label"><input id="arb_autobattle" type="checkbox"><span>Auto battle</span></label>
+          <label class="checkbox_label"><input id="arb_showhud" type="checkbox"><span>HUD</span></label>
+          <label>Poise</label><input id="arb_poise" type="number" min="1" max="20" class="text_pole arb_num">
+        </div>
+        <div class="arb_hint">The referee opens duels/battles when combat clearly starts and closes them when the fiction ends one. HUD: floating round + poise bars (✕ ends the fight). Poise: 5 suits people, 6-8 mecha Frames; a "poise" key per actor in the sheet overrides.</div>
+        <div class="arb_row">
+          <label>Duel vs</label><input id="arb_duel_name" type="text" class="text_pole" placeholder="opponent name">
+          <div id="arb_duel_start" class="menu_button">Start duel</div>
+          <div id="arb_duel_end" class="menu_button">End duel</div>
+        </div>
+        <div class="arb_row">
+          <input id="arb_battle_allies" type="text" class="text_pole" placeholder="allies: Stella, Alexia">
+          <input id="arb_battle_enemies" type="text" class="text_pole" placeholder="enemies: Bandit x3, Ogre">
+        </div>
+        <div class="arb_buttons">
+          <div id="arb_battle_start" class="menu_button">Start battle</div>
+          <div id="arb_battle_end" class="menu_button">End battle</div>
+        </div>
+        <div class="arb_hint">Manual controls — same as /duel &lt;name&gt;, /duelend, /battle allies | enemies, /battleend. You are added to allies automatically; "x3" clones a unit; unlisted foes count as trained. Battle turns = a personal fight or a command to the whole side; everyone else auto-resolves.</div>
+      </details>
 
-      <div class="arb_buttons">
-        <div id="arb_memsources" class="menu_button">Memory sources</div>
-        <div id="arb_reset_settings" class="menu_button">Reset settings</div>
-        <div id="arb_reset_chat" class="menu_button">Reset chat data</div>
-      </div>
-      <div class="arb_hint">Memory sources: shows exactly which memory injections the seeder reads right now (Summaryception, ledger, notepads, Author's Note). Reset settings: every knob back to factory defaults (asks first). Reset chat data: wipes THIS chat's sheet, threads, log, fights and caches — auto-seed rebuilds the sheet by itself (asks first).</div>
+      <details class="arb_group">
+        <summary><i class="fa-solid fa-globe"></i> Background world</summary>
+        <div class="arb_row">
+          <label class="checkbox_label"><input id="arb_eventengine" type="checkbox"><span>Event engine + threads</span></label>
+        </div>
+        <div class="arb_hint">Three escalating pity-timer tiers — Surprise d100 vs 95 (−3/quiet turn, ambient color), Encounter d200 vs 198 (−2, real hooks), World d500 vs 498 (−2, seismic shifts) — plus World Thread heartbeats. Never during fights; max ONE hint per turn.</div>
+        <b>Encounter table</b>
+        <div class="arb_hint">Comma-separated hooks the Encounter tier draws from; empty = defaults (includes new-NPC strangers: beggars, couriers, pickpockets). Hooks are tone-guarded and never force combat.</div>
+        <textarea id="arb_enctypes" rows="2"></textarea>
+        <b>World threads (per chat)</b>
+        <div class="arb_hint">Background currents advancing on dice heartbeats: ladders rung 0 → maxRung (5-12); bias tilts odds; pace = turns between beats; two advancing at once tangle. Seeded automatically; edit freely.</div>
+        <div id="arb_threads_list" class="arb_hint arb_threadlist"></div>
+        <textarea id="arb_threads" rows="5"></textarea>
+        <div class="arb_buttons">
+          <div id="arb_threads_save" class="menu_button">Save threads</div>
+          <div id="arb_threads_reload" class="menu_button">Reload</div>
+          <div id="arb_threads_seed" class="menu_button">Seed from story</div>
+        </div>
+      </details>
 
-      <hr>
-      <b>Capability sheet (per chat)</b>
-      <div class="arb_hint">JSON: {"actors": {"Name": {"default": 6, "domains": {"melee": 7}}}}. Ratings 0-10 · scale: 2 untrained · 4 trained · 5 pro · 6 veteran · 7 elite · 8 master · 9 legendary. Unknown actors/domains fall back to default.</div>
-      <textarea id="arb_sheet" rows="7"></textarea>
-      <div class="arb_buttons">
-        <div id="arb_sheet_save" class="menu_button">Save sheet</div>
-        <div id="arb_sheet_reload" class="menu_button">Reload</div>
-      </div>
+      <details class="arb_group">
+        <summary><i class="fa-solid fa-database"></i> Data &amp; tools</summary>
+        <div class="arb_buttons">
+          <div id="arb_btn_force" class="menu_button">Force next</div>
+          <div id="arb_btn_skip" class="menu_button">Skip next</div>
+          <div id="arb_btn_seed" class="menu_button">Seed sheet</div>
+        </div>
+        <div class="arb_hint">One-shot flags for your NEXT message (same as /arb, /arbskip) · manual full sheet update (same as /arbseed).</div>
+        <div class="arb_buttons">
+          <div id="arb_memsources" class="menu_button">Memory sources</div>
+          <div id="arb_reset_settings" class="menu_button">Reset settings</div>
+          <div id="arb_reset_chat" class="menu_button">Reset chat data</div>
+        </div>
+        <div class="arb_hint">Memory sources: exactly which memory injections the seeder reads right now. Reset settings: every knob back to factory defaults (asks first). Reset chat data: wipes THIS chat's sheet, threads, log, fights, caches — auto-seed rebuilds (asks first).</div>
+        <b>Capability sheet (per chat)</b>
+        <div class="arb_hint">{"actors": {"Name": {"default": 6, "poise": 7, "domains": {"melee": 7}}}} · scale: 2 untrained · 4 trained · 5 pro · 6 veteran · 7 elite · 8 master · 9 legendary.</div>
+        <textarea id="arb_sheet" rows="7"></textarea>
+        <div class="arb_buttons">
+          <div id="arb_sheet_save" class="menu_button">Save sheet</div>
+          <div id="arb_sheet_reload" class="menu_button">Reload</div>
+        </div>
+      </details>
 
-      <hr>
-      <b>World threads (per chat)</b>
-      <div class="arb_hint">Background currents that advance on their own via dice heartbeats — a rival's scheme, an investigation, a faction's move. Each is a ladder: rung 0 → maxRung (5-12); bias tilts its odds; pace = turns between heartbeats. Two advancing at once collide (tangle). At most ONE background hint injects per turn; the rest move silently. Requires Event engine ON.</div>
-      <div id="arb_threads_list" class="arb_hint"></div>
-      <textarea id="arb_threads" rows="5"></textarea>
-      <div class="arb_buttons">
-        <div id="arb_threads_save" class="menu_button">Save threads</div>
-        <div id="arb_threads_reload" class="menu_button">Reload</div>
-        <div id="arb_threads_seed" class="menu_button">Seed threads from story</div>
-      </div>
+      <details class="arb_group">
+        <summary><i class="fa-solid fa-gear"></i> Advanced</summary>
+        <div class="arb_row">
+          <label>Inject depth</label><input id="arb_depth" type="number" min="0" max="99" class="text_pole arb_num">
+          <label>Inject role</label>
+          <select id="arb_role" class="text_pole">
+            <option value="system">system</option>
+            <option value="user">user</option>
+            <option value="assistant">assistant</option>
+          </select>
+        </div>
+        <div class="arb_hint">Where the binding note enters the prompt. Depth 0 + system = bottom of context, strongest adherence. Leave as-is unless you know why.</div>
+        <div class="arb_row">
+          <label>Force tag</label><input id="arb_forcetag" type="text" class="text_pole arb_num">
+          <label>Skip tag</label><input id="arb_skiptag" type="text" class="text_pole arb_num">
+        </div>
+        <div class="arb_hint">Type these anywhere in a message: force tag guarantees a check on that fresh send, skip tag guarantees none.</div>
+        <b>Verb gate list</b>
+        <div class="arb_hint">Action words the free gate scans for (word-boundary + s/es/ed/ing; quoted dialogue ignored). Firing on chatter → remove verbs · attempts slipping through → add your prose's verbs.</div>
+        <textarea id="arb_verbs" rows="3"></textarea>
+      </details>
 
-      <hr>
-      <b>Encounter table</b>
-      <div class="arb_hint">Comma-separated hook types the Encounter tier draws from; empty = built-in defaults (includes new-NPC strangers: beggars, couriers, pickpockets). Remove anything that doesn't fit your genre — hooks are always tone-guarded and never force combat.</div>
-      <textarea id="arb_enctypes" rows="2"></textarea>
-
-      <hr>
-      <b>Verb gate list</b>
-      <div class="arb_hint">The action words the free gate scans your messages for (word-boundary match, plus s/es/ed/ing endings; quoted dialogue is ignored). Checks firing on harmless chatter → remove verbs. Real attempts slipping through unchecked → add the verbs your prose actually uses, comma-separated.</div>
-      <textarea id="arb_verbs" rows="3"></textarea>
-
-      <hr>
-      <b>Recent adjudications</b>
-      <div class="arb_hint">Last 30 rulings with the math: Δ = actor − opposition + circumstance → P = success chance → u = the actual roll (low roll = good).</div>
-      <div id="arb_log" class="arb_log"></div>
-      <div class="arb_buttons"><div id="arb_log_clear" class="menu_button">Clear log</div></div>
+      <details class="arb_group">
+        <summary><i class="fa-solid fa-scroll"></i> Recent adjudications</summary>
+        <div class="arb_hint">Last 30 rulings with the math: Δ = actor − opposition + circumstance → P = success chance → u = the roll (low = good).</div>
+        <div id="arb_log" class="arb_log"></div>
+        <div class="arb_buttons"><div id="arb_log_clear" class="menu_button">Clear log</div></div>
+      </details>
     </div>
   </div>
 </div>`;
+    }
+
+    function renderStatus() {
+        const el = $('#arb_status');
+        if (!el.length) return;
+        const s = getSettings();
+        const meta = getMeta();
+        const p = getProfiles().find(x => x.id === s.profileId);
+        const chips = [];
+        chips.push('<span class="arb_chip ' + (s.enabled ? 'ok' : 'bad') + '">' + (s.enabled ? 'ACTIVE' : 'DISABLED') + '</span>');
+        chips.push('<span class="arb_chip ' + (p ? 'ok' : 'warn') + '" title="Adjudicator route">' + escHtml(p ? p.name : 'no profile · raw fallback') + '</span>');
+        chips.push('<span class="arb_chip">' + escHtml(s.mode + ' · ' + s.preset) + '</span>');
+        if (meta) {
+            const actors = Object.keys(meta.sheet.actors || {}).length;
+            const threads = (meta.threads || []).filter(t => !t.done).length;
+            chips.push('<span class="arb_chip">' + actors + ' actors · ' + threads + ' threads</span>');
+        }
+        el.html(chips.join(''));
     }
 
     function refreshProfiles() {
@@ -1935,6 +1973,7 @@
         const el = $('#arb_sheet');
         if (!el.length) return;
         el.val(meta ? JSON.stringify(meta.sheet, null, 2) : '{}');
+        renderStatus();
     }
 
     function renderThreads() {
@@ -1950,6 +1989,7 @@
                 return escHtml(t.name) + (t.done ? ' — <b>concluded</b>' : ' — ' + '▮'.repeat(filled) + '▯'.repeat(max - filled) + ' ' + filled + '/' + max);
             }).join('<br>'));
         }
+        renderStatus();
     }
 
     function renderLog() {
@@ -2055,6 +2095,7 @@
         $('#arb_showhud').prop('checked', !!s.showHud);
         $('#arb_poise').val(s.duelPoise);
         $('#arb_profile').val(s.profileId || '');
+        renderStatus();
     }
 
     function resetSettingsToDefaults() {
@@ -2093,7 +2134,7 @@
     function bindUI() {
         const s = getSettings();
 
-        $('#arb_enabled').prop('checked', !!s.enabled).on('change', function () { s.enabled = this.checked; saveSettings(); });
+        $('#arb_enabled').prop('checked', !!s.enabled).on('change', function () { s.enabled = this.checked; saveSettings(); renderStatus(); });
         $('#arb_toast').prop('checked', !!s.toastResults).on('change', function () { s.toastResults = this.checked; saveSettings(); });
         $('#arb_showmath').prop('checked', !!s.showMath).on('change', function () { s.showMath = this.checked; saveSettings(); });
         $('#arb_debug').prop('checked', !!s.debug).on('change', function () { s.debug = this.checked; saveSettings(); });
@@ -2111,8 +2152,8 @@
         $('#arb_autoseed').prop('checked', !!s.autoSeed).on('change', function () { s.autoSeed = this.checked; saveSettings(); });
         $('#arb_autoseedevery').val(s.autoSeedEvery).on('input', function () { s.autoSeedEvery = clamp(this.value, 10, 500); saveSettings(); });
 
-        $('#arb_mode').val(s.mode).on('change', function () { s.mode = this.value; saveSettings(); });
-        $('#arb_preset').val(s.preset).on('change', function () { s.preset = this.value; saveSettings(); });
+        $('#arb_mode').val(s.mode).on('change', function () { s.mode = this.value; saveSettings(); renderStatus(); });
+        $('#arb_preset').val(s.preset).on('change', function () { s.preset = this.value; saveSettings(); renderStatus(); });
         $('#arb_autoduel').prop('checked', !!s.autoDuel).on('change', function () { s.autoDuel = this.checked; saveSettings(); });
         $('#arb_showhud').prop('checked', !!s.showHud).on('change', function () { s.showHud = this.checked; saveSettings(); renderHud(); });
         $('#arb_poise').val(s.duelPoise).on('input', function () { s.duelPoise = clamp(this.value, 1, 20); saveSettings(); });
@@ -2179,7 +2220,7 @@
 
         applySettingsToUI();
 
-        $('#arb_profile').on('change', function () { s.profileId = this.value; saveSettings(); });
+        $('#arb_profile').on('change', function () { s.profileId = this.value; saveSettings(); renderStatus(); });
         $('#arb_profile_refresh').on('click', refreshProfiles);
 
         $('#arb_btn_force').on('click', () => {
