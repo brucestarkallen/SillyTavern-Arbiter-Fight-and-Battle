@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.7.1';
+    const VERSION = '0.7.2';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -975,6 +975,27 @@
         return { block, sources };
     }
 
+    /** Harvest a rough roster of named characters from memory + the existing
+     *  sheet, so the seeder is reminded of the whole cast even when most are
+     *  off-screen. Heuristic only — the model does the real judgement. */
+    function collectKnownNames(meta, mem) {
+        const names = new Set();
+        for (const k of Object.keys(meta.sheet?.actors || {})) if (k.trim()) names.add(k.trim());
+        try {
+            const text = (mem && mem.block) ? mem.block : '';
+            const re = /\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})?)\b/g;
+            const stop = new Set(['The', 'This', 'That', 'They', 'Then', 'There', 'When', 'With', 'From', 'Your', 'What', 'Where', 'While', 'After', 'Before', 'Player', 'Author', 'Note', 'Memory', 'Scene', 'Chapter', 'Summary', 'And', 'But', 'For', 'His', 'Her', 'She', 'Their', 'Them', 'Have', 'Has', 'Was', 'Were', 'Will', 'Would', 'Could', 'Should']);
+            let m, count = 0;
+            while ((m = re.exec(text)) !== null && count < 500) {
+                count++;
+                const cand = m[1].trim();
+                if (stop.has(cand) || stop.has(cand.split(' ')[0])) continue;
+                names.add(cand);
+            }
+        } catch (e) { /* heuristic only */ }
+        return Array.from(names).slice(0, 60);
+    }
+
     const THREAD_SEED_SYSTEM = [
         'You read a roleplay transcript plus its memory notes and propose BACKGROUND CURRENTS: off-screen storylines that should advance on their own (a rival\'s scheme, an investigation closing in, a faction\'s move, an NPC\'s ambition). Output STRICT JSON only, one object, no markdown.',
         '',
@@ -1666,7 +1687,7 @@
         '',
         'Rating guide: 2 untrained, 4 trained, 5 competent professional, 6 veteran, 7 elite, 8 master, 9 legendary, 10 apex-of-setting.',
         'Domains are lowercase single words (melee, ranged, stealth, social, athletics, intellect, willpower, pilot, craft — invent others only if the story clearly needs them).',
-        'Include the player character and every named character likely to oppose or be tested. 2-5 domains per actor is plenty. Rate from evidence in the transcript; when unsure, prefer 4-6.',
+        'Include the player character AND every named character in the story — allies, rivals, mentors, recurring NPCs, and anyone listed in <known_characters> — not only those active in the recent transcript. A large cast is expected; cover everyone named and do NOT silently drop characters to save space. 2-4 domains per actor is plenty. Rate from evidence in the transcript and memory; when unsure, prefer 4-6. Merge obvious duplicates or aliases into a single entry.',
     ].join('\n');
 
     async function seedSheet(opts) {
@@ -1680,22 +1701,24 @@
         if (!o.auto) toast('info', 'Reading the story and building the sheet…', 'Arbiter seed');
         const parts = [];
         let chars = 0;
-        for (let i = chat.length - 1; i >= 0 && chars < 7000; i--) {
+        for (let i = chat.length - 1; i >= 0 && chars < 16000; i--) {
             const m = chat[i];
             if (!m || !m.mes || m.is_system) continue;
-            const line = (m.name || (m.is_user ? 'Player' : 'AI')) + ': ' + String(m.mes).replace(/\s+/g, ' ').slice(0, 400);
+            const line = (m.name || (m.is_user ? 'Player' : 'AI')) + ': ' + String(m.mes).replace(/\s+/g, ' ').slice(0, 500);
             chars += line.length;
             parts.push(line);
         }
         const existing = JSON.stringify(meta.sheet || { actors: {} });
 
-        // Memory-aware seeding: everything the memory stack injects
-        // (Summaryception, ledger, notepads, Author's Note) + the transcript.
-        const mem = collectMemoryBlock(5000);
-        const userPrompt = '<existing_sheet>\n' + existing + '\n</existing_sheet>' + (mem.block ? '\n\n' + mem.block : '') + '\n\n<transcript>\n' +
+        // Memory-aware seeding: memory FIRST (it names the established cast,
+        // including characters off-screen right now), then the transcript.
+        const mem = collectMemoryBlock(9000);
+        const roster = collectKnownNames(meta, mem);
+        const rosterBlock = roster.length ? '<known_characters>\n' + roster.join(', ') + '\n</known_characters>\n\n' : '';
+        const userPrompt = '<existing_sheet>\n' + existing + '\n</existing_sheet>\n\n' + rosterBlock + (mem.block ? mem.block + '\n\n' : '') + '<transcript>\n' +
             parts.reverse().join('\n') + '\n</transcript>';
 
-        const out = await callLLM(SEED_SYSTEM, userPrompt, 800, 45000);
+        const out = await callLLM(SEED_SYSTEM, userPrompt, 1500, 60000);
         let obj = null;
         for (const cand of extractJsonCandidates(out, 5)) {
             if (cand && typeof cand.actors === 'object' && cand.actors !== null) { obj = cand; break; }
