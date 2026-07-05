@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.10.1';
+    const VERSION = '0.10.2';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -634,7 +634,7 @@
         '{"check": true|false,',
         ' "action": "<the attempt, 3-10 words>",',
         ' "domain": "<one lowercase word, e.g. melee, ranged, stealth, social, athletics, intellect, willpower, pilot, craft>",',
-        ' "actor": "<who attempts it — usually the player character\'s name>",',
+        ' "actor": "<MUST be exactly the player character named in <player>. Checks are always for the PLAYER attempting the action; second-person you in <action> is the player, never the narrator or storyteller card name>",',
         ' "opposition_kind": "actor" | "tier",',
         ' "opposition": "<a character name from the sheet if a known character opposes; otherwise a task tier: trivial|easy|moderate|hard|extreme, or an unnamed-opponent tier: mook|trained|elite|formidable|inferior|peer|superior>",',
         ' "circumstance": <integer -3..3>,',
@@ -665,10 +665,11 @@
 
     function buildAdjUserPrompt(chat, lastUserMes, meta) {
         const s = getSettings();
+        const playerName = ctx().name1 || 'Player';
         const sheet = JSON.stringify(meta.sheet || { actors: {} });
         const recent = compactRecent(chat, clamp(s.ctxMsgs, 1, 10), lastUserMes);
         const action = String(lastUserMes.mes).slice(0, 700);
-        return '<sheet>\n' + sheet + '\n</sheet>\n\n<recent>\n' + recent + '\n</recent>\n\n<action>\n' + action + '\n</action>';
+        return '<player>\nThe player character is "' + playerName + '". The text in <action> is written BY the player: "I" and second-person "you" in it both mean ' + playerName + ' acting. The storyteller\'s messages in <recent> may be labeled with a card/narrator name that is NOT a combatant.\n</player>\n\n<sheet>\n' + sheet + '\n</sheet>\n\n<recent>\n' + recent + '\n</recent>\n\n<action>\n' + action + '\n</action>';
     }
 
     function normalizeAdj(obj) {
@@ -676,9 +677,40 @@
         if (obj.check === false) return { check: false };
         if (obj.check !== true) return null;
         const domain = String(obj.domain || 'general').toLowerCase().trim() || 'general';
-        const actor = String(obj.actor || '').trim() || (ctx().name1 || 'Player');
+        // The actor is ALWAYS the player. Model discretion here caused an
+        // identity swap (narrator card scored as the actor vs the player's
+        // own stats), so we enforce it: keep the model's claim only to
+        // repair an inverted duel_start below.
+        const playerName = ctx().name1 || 'Player';
+        const modelActor = String(obj.actor || '').trim();
+        const actor = playerName;
         const kind = obj.opposition_kind === 'actor' ? 'actor' : 'tier';
-        const opposition = String(obj.opposition || 'moderate').trim() || 'moderate';
+        let opposition = String(obj.opposition || 'moderate').trim() || 'moderate';
+
+        // Swap repair: an inverted referee names the PLAYER as the foe.
+        const isPlayerish = (n) => {
+            if (!n) return false;
+            const a = n.toLowerCase(), b = playerName.toLowerCase();
+            return a === b || a.includes(b) || b.includes(a);
+        };
+        let duelStart = (typeof obj.duel_start === 'string' && obj.duel_start.trim()) ? obj.duel_start.trim().slice(0, 60) : null;
+        if (isPlayerish(duelStart)) {
+            // The model put the player on the wrong side. If it named someone
+            // else as "actor", that someone is the real opponent; else drop.
+            duelStart = (modelActor && !isPlayerish(modelActor)) ? modelActor.slice(0, 60) : null;
+            dlog('inverted duel_start repaired →', duelStart || '(dropped)');
+        }
+        if (kind === 'actor' && isPlayerish(opposition)) {
+            // Opposition can never be the player either.
+            opposition = (modelActor && !isPlayerish(modelActor)) ? modelActor : 'hard';
+            dlog('inverted opposition repaired →', opposition);
+        }
+        let battleStart = normalizeRoster(obj.battle_start);
+        if (battleStart) {
+            battleStart.enemies = (battleStart.enemies || []).filter(n => !isPlayerish(n));
+            if (!battleStart.enemies.length) battleStart = null;
+        }
+
         return {
             check: true,
             action: String(obj.action || 'the attempt').slice(0, 140),
@@ -689,8 +721,8 @@
             circumstance: clamp(Math.round(Number(obj.circumstance) || 0), -3, 3),
             why: String(obj.why || '').slice(0, 160),
             stakes: String(obj.stakes || '').slice(0, 160),
-            duel_start: (typeof obj.duel_start === 'string' && obj.duel_start.trim()) ? obj.duel_start.trim().slice(0, 60) : null,
-            battle_start: normalizeRoster(obj.battle_start),
+            duel_start: duelStart,
+            battle_start: battleStart,
             war_start: normalizeWarStart(obj.war_start),
             army_scale: (typeof obj.army_scale === 'string' && obj.army_scale.trim()) ? obj.army_scale.trim().slice(0, 80) : null,
         };
@@ -2156,7 +2188,12 @@
         const mem = collectMemoryBlock(clamp(s.seedMemoryK, 2, 500) * 1000);
         const roster = collectKnownNames(meta, mem);
         const rosterBlock = roster.length ? '<known_characters>\n' + roster.join(', ') + '\n</known_characters>\n\n' : '';
-        const userPrompt = '<existing_sheet>\n' + existing + '\n</existing_sheet>\n\n' + rosterBlock + (mem.block ? mem.block + '\n\n' : '') + '<transcript>\n' +
+        const playerName = c.name1 || 'Player';
+        const cardName = c.name2 || '';
+        const voices = '<voices>\nplayer_character: ' + playerName + '\n' +
+            (cardName ? 'storyteller_label: ' + cardName + ' — this labels the narrator/storyteller\'s messages in the transcript. Do NOT create an actor entry for it unless the story clearly shows an individual PERSON by this exact name who acts and fights in scenes.\n' : '') +
+            '</voices>\n\n';
+        const userPrompt = '<existing_sheet>\n' + existing + '\n</existing_sheet>\n\n' + voices + rosterBlock + (mem.block ? mem.block + '\n\n' : '') + '<transcript>\n' +
             parts.reverse().join('\n') + '\n</transcript>';
 
         const out = await callLLM(SEED_SYSTEM, userPrompt, clamp(s.seedOutTokens, 400, 8000), 60000);
