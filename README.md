@@ -281,6 +281,19 @@ trade drops both fighters at once. Tune frequency with the **Tie window**
 under Outcome feel (0 disables; 0.06 default; higher = more ties); it affects
 only fighting exchanges, never single checks.
 
+## Growth-aware updates (v0.12)
+
+The sheet now tracks power growth. No manual setup is needed to start — the
+first auto-seed fires after your 2nd message and builds the cast itself. On
+each refresh (every N turns, default 50), ratings Arbiter generated are RAISED
+as the story shows characters training, leveling, or unlocking power (a foe
+who was trained-4 and became elite is re-rated 7) — but never lowered, so a
+temporary setback doesn't nerf anyone. Crucially, any rating YOU type into the
+sheet by hand is LOCKED: growth refreshes never touch it, in either direction.
+The panel shows a clean sheet without internal flags, so editing and saving
+always yields a locked, authoritative entry. Priority: your hand-edit >
+considered/grown auto rating > persisted estimate > fresh estimate > fallback.
+
 ## Estimate persistence (v0.11.3)
 
 Round-1 estimates don't just vanish. When a duel ends against an

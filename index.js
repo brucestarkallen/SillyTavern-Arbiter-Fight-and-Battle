@@ -2275,6 +2275,7 @@
         'Rating guide: 2 untrained, 4 trained, 5 competent professional, 6 veteran, 7 elite, 8 master, 9 legendary, 10 apex-of-setting.',
         'Domains are lowercase single words (melee, ranged, stealth, social, athletics, intellect, willpower, pilot, craft — invent others only if the story clearly needs them).',
         'Include the player character AND every named CHARACTER in the story — allies, rivals, mentors, recurring NPCs, and people listed in <known_characters> — not only those active in the recent transcript. A large cast is expected; cover everyone named and do NOT silently drop characters to save space. 2-4 domains per actor is plenty. Rate from evidence in the transcript and memory; when unsure, prefer 4-6. Merge obvious duplicates or aliases into a single entry.',
+        'Rate each character at their CURRENT power level as of the latest events. If the story shows someone has trained, leveled up, unlocked new power, or grown stronger since earlier, reflect that higher rating now — a character who was trained (4) and has since become elite should be rated elite (7). The <existing_sheet> shows prior ratings; when the fiction clearly shows growth beyond them, rate the new, higher level.',
         'CRITICAL: actors are PEOPLE and creatures ONLY. Never create an entry for a place, city, academy, school, house, clan, faction, organization, team name, region, or title. If a name in <known_characters> is a location or institution (e.g. an academy or a noble house), leave it out entirely. When a name is ambiguous, include it only if the story clearly uses it as an individual who acts and fights.',
     ].join('\n');
 
@@ -2337,23 +2338,33 @@
             if (!name.trim() || !entry || typeof entry !== 'object') continue;
             const key = name.trim();
             const existing = findActor(meta, key);
-            const clean = { default: clamp(entry.default ?? 5, 0, 10), domains: {} };
+            const clean = { default: clamp(entry.default ?? 5, 0, 10), domains: {}, _auto: true };
             for (const [d, v] of Object.entries(entry.domains || {})) {
                 const dk = String(d).toLowerCase().trim();
                 if (dk) clean.domains[dk] = clamp(v, 0, 10);
             }
             if (o.auto && existing && !existing._estimated) {
-                // Auto refresh NEVER overwrites ratings you may have tuned —
-                // it only fills in domains the actor didn't have yet.
-                for (const [dk, dv] of Object.entries(clean.domains)) {
-                    if (existing.domains?.[dk] === undefined) {
-                        existing.domains = existing.domains || {};
-                        existing.domains[dk] = dv;
+                // Growth-aware refresh. An entry Arbiter generated (_auto) may be
+                // RAISED as the story shows a character getting stronger, but never
+                // lowered. An entry YOU hand-edited (no _auto flag) is fully locked
+                // — neither raised nor lowered — so your explicit numbers win.
+                const auto = existing._auto === true;
+                if (auto) {
+                    if (clean.default > (existing.default ?? 0)) existing.default = clean.default; // level up
+                    existing.domains = existing.domains || {};
+                    for (const [dk, dv] of Object.entries(clean.domains)) {
+                        if (existing.domains[dk] === undefined || dv > existing.domains[dk]) existing.domains[dk] = dv;
+                    }
+                } else {
+                    // Hand-edited: only ADD brand-new domains, never touch existing numbers.
+                    existing.domains = existing.domains || {};
+                    for (const [dk, dv] of Object.entries(clean.domains)) {
+                        if (existing.domains[dk] === undefined) existing.domains[dk] = dv;
                     }
                 }
                 continue;
             }
-            // A fresh considered rating replaces a prior estimated baseline.
+            // A fresh considered rating replaces a prior estimated baseline (or is new).
             meta.sheet.actors[key] = clean;
             added++;
         }
@@ -2624,7 +2635,17 @@
         const meta = getMeta();
         const el = $('#arb_sheet');
         if (!el.length) return;
-        el.val(meta ? JSON.stringify(meta.sheet, null, 2) : '{}');
+        // Show a clean view without internal flags (_auto/_estimated). Editing
+        // and saving from this view yields hand-edited (locked) entries.
+        let view = { actors: {} };
+        try {
+            const actors = meta?.sheet?.actors || {};
+            for (const [name, entry] of Object.entries(actors)) {
+                const { _auto, _estimated, ...rest } = entry || {};
+                view.actors[name] = rest;
+            }
+        } catch (e) { view = meta ? meta.sheet : { actors: {} }; }
+        el.val(JSON.stringify(view, null, 2));
         renderStatus();
     }
 
