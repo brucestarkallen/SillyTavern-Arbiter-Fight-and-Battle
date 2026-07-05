@@ -176,6 +176,22 @@ disadvantaged) is injected and the storyteller picks the footing. Honest
 caveat: that hands footing discretion back to the model, so adjudicated mode
 stays the default; fast also works inside duels (circumstance 0).
 
+Inside a **fast-mode duel** the real duel maths still run — ratings, injuries,
+momentum, openings, **scale mismatch, and composure all feed the delta** (they
+are read off the fight state, not classified per turn). Since v0.15.1 fast mode
+also handles **recovery**: a local, conservative detector (`looksLikeRecovery`)
+spots an explicit disengage-to-heal (fall back, catch your breath, drink a
+potion, bandage a wound, steady yourself) and routes it through the recovery
+path — regain poise, cede tempo, eat the counter — instead of misreading it as
+an attack. It is deliberately precision-biased: if the move also strikes the
+foe it stays an attack, and an unrecognised phrasing simply resolves as an
+attack (never a regression). Two things fast mode still *cannot* do, by nature
+of having no LLM in the loop: read **new** conditions out of the prose (a
+broken arm narrated this turn won't auto-apply — set it with `/condition`;
+existing conditions are always honoured), and weigh **per-move circumstance**
+(position, tool, terrain), which is fixed at 0. Use adjudicated mode when those
+matter.
+
 ## Battles & commander mode (v0.3)
 
 Group fights get the same treatment as duels, scaled up. A **battle** is two

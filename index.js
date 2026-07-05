@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.15.0';
+    const VERSION = '0.15.1';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -360,12 +360,55 @@
         DISASTER: { condMod: 1, favors: 'enemies' },
     };
 
+    /**
+     * Local, zero-LLM recovery detector — FAST MODE ONLY. Adjudicated mode uses
+     * the LLM's move_kind:"recover" (see DUEL_SYSTEM). Fast mode has no
+     * classifier, so without this every disengage-to-heal in a fast-mode duel
+     * was resolved as an ATTACK — incoherent narration, and on a good roll the
+     * "heal" dealt free poise damage to the opponent, a mild tilt toward the
+     * player that this project forbids. Deliberately conservative: a false
+     * positive turns a real attack into a heal (denying the player their offence
+     * AND ceding tempo), so the bar is an explicit self-restoration that
+     * DISENGAGES, with no offensive strike at the foe. Anything that still
+     * contests the opponent (a defensive counter, a heal-and-strike) stays an
+     * attack — exactly the rule the adjudicated prompt applies. Recall is
+     * intentionally imperfect: a missed cue simply falls back to attack (the
+     * prior behaviour, so never a regression). Dialogue is stripped first, like
+     * the trigger gate, so a spoken "I'll heal you!" never triggers it.
+     */
+    function looksLikeRecovery(text) {
+        const t = stripDialogue(String(text || '')).toLowerCase();
+        if (!t) return false;
+        // Explicit disengage-to-restore idioms (poise / composure / wounds); the
+        // move cedes tempo rather than contesting the opponent.
+        const restore = new RegExp('\\b(?:' + [
+            'disengag\\w*', 'retreat\\w*', 'withdraw\\w*',
+            'fall(?:s|ing)?\\s+back', 'fell\\s+back',
+            'pull(?:s|ing)?\\s+back', 'back(?:s|ing)?\\s+(?:off|away)',
+            'catch(?:es|ing)?\\s+(?:\\w+\\s+){0,2}breath', 'caught\\s+(?:\\w+\\s+){0,2}breath',
+            'regain(?:s|ed|ing)?\\s+(?:\\w+\\s+){0,2}composure',
+            'steady(?:ing)?\\s+(?:my|him|her|them)self', 'steadies\\s+(?:my|him|her|them)self',
+            'heal(?:s|ed|ing)?\\s+(?:my|him|her|them)self',
+            'mend(?:s|ed|ing)?\\s+(?:my|his|her|their)\\b',
+            'tend(?:s|ed|ing)?\\s+(?:to\\s+)?(?:my|his|her|their)\\b',
+            'bandag\\w*',
+            '(?:drink(?:s|ing)?|drank|quaff\\w*|gulp(?:s|ed|ing)?|swig\\w*)\\s+(?:a\\s+|the\\s+|down\\s+)?(?:\\w+\\s+){0,2}(?:potion|elixir|draught|tonic)',
+            'take[sn]?\\s+a\\s+(?:moment|breath)\\s+to\\s+(?:recover|breathe|breath|heal|rest)',
+        ].join('|') + ')\\b');
+        if (!restore.test(t)) return false;
+        // Vetoed if the move also drives an offensive strike at the foe — that is
+        // a contesting action ("defensive counter"), which stays an attack.
+        const offense = /\b(?:attack\w*|strik\w*|struck|slash\w*|stab\w*|thrust\w*|shoot\w*|shot|fir(?:e|es|ed|ing)|blast\w*|lung(?:e|es|ed|ing)|charg\w*|swing\w*|swung|hack\w*|cleav\w*|impal\w*|pierc\w*|smash\w*|punch\w*|kick\w*|riposte\w*|counter-?attack\w*|shov\w*|tackl\w*)\b/;
+        return !offense.test(t);
+    }
+
     globalThis.ArbiterEngine = {
         probFromDelta, sliceOutcome, rngFloat, TIERS, TIER_RATINGS,
         PRESETS, EXCHANGE_EFFECTS, applyExchangeEffects, poiseWord,
         rollEventTick, rollTier, tickThread, ENGINE_DEFAULTS,
         EVENT_TYPES, ENCOUNTER_TYPES, extractJsonCandidates, collectMemoryBlock,
         STRATAGEM_EFFECTS, tieCheck, ratingFor, composurePenalty, applyComposureChange,
+        looksLikeRecovery,
     };
 
     /* ------------------------------------------------------------------ */
@@ -2197,7 +2240,13 @@
             if (s.mode === 'fast') {
                 const action = String(lastUser.mes).replace(/\s+/g, ' ').slice(0, 90);
                 if (inDuel) {
-                    const res = resolveDuelExchange(meta, 0);
+                    // No LLM classifier in fast mode: detect a disengage-to-recover
+                    // locally (conservative — see looksLikeRecovery); else resolve
+                    // as an attack. Scale mismatch and composure still apply: they
+                    // are read off the duel/meta inside resolveDuelExchange, not
+                    // passed as arguments. Only per-move circumstance is 0 here.
+                    const mk = looksLikeRecovery(lastUser.mes) ? 'recover' : 'attack';
+                    const res = resolveDuelExchange(meta, 0, mk);
                     const directive = buildDuelDirective(meta, { action }, res);
                     setInjection(directive);
                     commitCache(directive, res.tier);
