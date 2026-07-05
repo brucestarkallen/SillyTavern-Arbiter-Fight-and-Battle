@@ -69,10 +69,13 @@ so realism properties hold automatically (verified by Monte Carlo test):
    profile*. Leaving it empty falls back to a raw call on your current API —
    works, but if your main model is a slow thinking model, checks will be slow
    too (the timeout still protects you).
-3. Open your RP chat → press **Seed sheet from story** (or `/arbseed`). Arbiter
-   reads recent messages **and your memory extensions' injections** (snippets,
-   notepads, Author's Note) and builds a capability sheet. Re-run it whenever
-   characters have grown. Edit it in the panel —
+3. Open your RP chat and just play. **Auto seed** (on by default) builds the
+   capability sheet by itself after a few messages — reading the transcript
+   **and your memory extensions' injections** (snippets, notepads, Author's
+   Note) — then quietly refreshes every N turns (default 50) to learn new
+   faces and growth, never overwriting ratings you hand-edited. World Threads
+   auto-seed too when the Event engine is on. `/arbseed` and `/arbthreads`
+   remain as manual force-updates only. Edit it in the panel —
    it's plain JSON, per chat.
 
 ## Usage
@@ -224,6 +227,17 @@ everything else — world momentum never double-applies.
 Deliberate boundary: Arbiter owns the **dice** of the background world.
 Character *state* (personalities, relationships, who knows what) belongs to
 your character-ledger tooling — one source of truth each.
+
+## Thinking models
+
+The adjudicator profile works with thinking models — the JSON parser scans
+past reasoning (even reasoning containing braces) to find the real object —
+but per-turn checks on a thinking endpoint will regularly outlive the 6 s
+timeout and silently skip, which defeats the purpose. Recommended: a fast
+non-thinking model for the adjudicator profile; your MAIN storyteller can be
+as think-y as you like (Arbiter never touches that connection), and seeding
+calls (45 s budget) tolerate thinking models fine. If you insist on a
+thinking adjudicator, raise the timeout to 30-60 s and accept the wait.
 
 ## Roadmap
 

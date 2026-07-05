@@ -226,8 +226,8 @@
      *  Encounter d200 vs 198 (−2), World d500 vs 498 (−2). */
     const EVENT_TYPES = ['a complication', 'an opportunity', 'an unexpected arrival', 'a small discovery', 'an environment shift', 'a rumor or overheard word'];
     const EVENT_TONES = ['tense', 'mundane', 'comic', 'ominous', 'warm', 'dramatic'];
-    const ENCOUNTER_TYPES = ['a rival or obstacle appears', 'a challenge is issued', 'someone needs help', 'a threat surfaces', 'a tempting shortcut opens', 'an old acquaintance resurfaces'];
-    const ENCOUNTER_TONES = ['tense', 'dangerous', 'promising', 'awkward', 'urgent'];
+    const ENCOUNTER_TYPES = ['a rival or obstacle appears', 'a challenge is issued', 'someone needs help', 'a threat surfaces', 'a tempting shortcut opens', 'an old acquaintance resurfaces', 'a passing stranger crosses the player\'s path — invent a fitting minor NPC (beggar, peddler, courier, pickpocket, street kid, drunk, off-duty guard)', 'someone new arrives with a small want or offer — invent them concretely'];
+    const ENCOUNTER_TONES = ['tense', 'dangerous', 'promising', 'awkward', 'urgent', 'quiet'];
     const WORLD_WHO = ['a powerful faction', 'an unknown actor', 'an old enemy', 'the authorities', 'a rising newcomer'];
     const WORLD_WHAT = ['makes a decisive move', 'suffers a sudden collapse', 'reveals a long-held secret', 'declares open intent', 'shifts the balance of power'];
     const WORLD_WHERE = ['far away, arriving as news', 'closer than expected', 'at the heart of things'];
@@ -276,6 +276,7 @@
         probFromDelta, sliceOutcome, rngFloat, TIERS, TIER_RATINGS,
         PRESETS, EXCHANGE_EFFECTS, applyExchangeEffects, poiseWord,
         rollEventTick, rollTier, tickThread, ENGINE_DEFAULTS,
+        EVENT_TYPES, ENCOUNTER_TYPES, extractJsonCandidates,
     };
 
     /* ------------------------------------------------------------------ */
@@ -318,6 +319,9 @@
         autoDuel: true,           // let the adjudicator open/close duels from the fiction
         autoBattle: true,         // let the adjudicator open group battles from the fiction
         eventEngine: false,       // ambient escalating random events (pity-timer RNG)
+        autoSeed: true,           // background sheet/thread seeding — no commands needed
+        autoSeedEvery: 50,        // re-read story+memory every N turns to learn new faces
+        encounterTypes: '',       // comma list overriding built-in encounter hooks ('' = defaults)
         duelPoise: 5,             // default poise pool (sheet "poise" per actor overrides)
         showHud: true,
         debug: false,
@@ -359,6 +363,8 @@
         }
         if (!Array.isArray(m.threads)) m.threads = [];
         if (!Number.isFinite(m.tickCount)) m.tickCount = 0;
+        if (!Number.isFinite(m.turnCount)) m.turnCount = 0;
+        if (!Number.isFinite(m.lastAutoSeedAt)) m.lastAutoSeedAt = -999999;
         return m;
     }
 
@@ -503,31 +509,37 @@
         }
     }
 
-    /** Extract the first balanced {...} object from model output and parse it. */
-    function extractJson(text) {
-        if (!text) return null;
+    /** Extract balanced {...} objects from model output. Thinking models may
+     *  emit reasoning (possibly containing braces) before the real JSON, so
+     *  we scan for up to `limit` parseable candidates; callers try each. */
+    function extractJsonCandidates(text, limit) {
+        const out = [];
+        if (!text) return out;
         const cleaned = String(text).replace(/```(?:json)?/gi, '');
-        const start = cleaned.indexOf('{');
-        if (start === -1) return null;
-        let depth = 0;
-        let inStr = false;
-        let escNext = false;
-        for (let i = start; i < cleaned.length; i++) {
-            const ch = cleaned[i];
-            if (escNext) { escNext = false; continue; }
-            if (ch === '\\') { escNext = true; continue; }
-            if (ch === '"') { inStr = !inStr; continue; }
-            if (inStr) continue;
-            if (ch === '{') depth++;
-            else if (ch === '}') {
-                depth--;
-                if (depth === 0) {
-                    try { return JSON.parse(cleaned.slice(start, i + 1)); }
-                    catch (e) { return null; }
-                }
+        let i = 0;
+        while (out.length < (limit || 5)) {
+            const start = cleaned.indexOf('{', i);
+            if (start === -1) break;
+            let depth = 0, inStr = false, escNext = false, end = -1;
+            for (let j = start; j < cleaned.length; j++) {
+                const ch = cleaned[j];
+                if (escNext) { escNext = false; continue; }
+                if (ch === '\\') { escNext = true; continue; }
+                if (ch === '"') { inStr = !inStr; continue; }
+                if (inStr) continue;
+                if (ch === '{') depth++;
+                else if (ch === '}') { depth--; if (depth === 0) { end = j; break; } }
             }
+            if (end === -1) break;
+            try { out.push(JSON.parse(cleaned.slice(start, end + 1))); } catch (e) { /* skip */ }
+            i = (end === -1 ? start : end) + 1;
         }
-        return null;
+        return out;
+    }
+
+    function extractJson(text) {
+        const c = extractJsonCandidates(text, 1);
+        return c.length ? c[0] : null;
     }
 
     /* ------------------------------------------------------------------ */
@@ -845,6 +857,12 @@
         return 'an unmistakable escalation';
     }
 
+    function getEncounterTypes() {
+        const s = getSettings();
+        const list = String(s.encounterTypes || '').split(',').map(t => t.trim()).filter(Boolean);
+        return list.length ? list : ENCOUNTER_TYPES;
+    }
+
     /**
      * One background pass for a fresh player turn. Rolls all three engine
      * tiers, heartbeats due threads, resolves tangles, then injects AT MOST
@@ -897,21 +915,22 @@
             const who = WORLD_WHO[Math.floor(rng() * WORLD_WHO.length)];
             const what = WORLD_WHAT[Math.floor(rng() * WORLD_WHAT.length)];
             const where = WORLD_WHERE[Math.floor(rng() * WORLD_WHERE.length)];
-            queue.push({ prio: 4, text: '[ARBITER EVENT — seismic shift: ' + who + ' ' + what + ', ' + where + '. Land it as news or rumor first unless the fiction puts it on top of the player.]' });
+            queue.push({ prio: 4, text: '[ARBITER EVENT — seismic shift: ' + who + ' ' + what + ', ' + where + '. Land it as news or rumor first unless the fiction puts it on top of the player; it must fit the setting\'s tone and scale.]' });
         }
         const e = rollTier(eng.encounter.dc, ENGINE_DEFAULTS.encounter.sides, ENGINE_DEFAULTS.encounter.decay, ENGINE_DEFAULTS.encounter.dc0, rng);
         eng.encounter.dc = e.nextDC;
         if (e.fired) {
-            const type = ENCOUNTER_TYPES[Math.floor(rng() * ENCOUNTER_TYPES.length)];
+            const table = getEncounterTypes();
+            const type = table[Math.floor(rng() * table.length)];
             const tone = ENCOUNTER_TONES[Math.floor(rng() * ENCOUNTER_TONES.length)];
-            queue.push({ prio: 3, text: '[ARBITER EVENT — a hook fires: ' + type + ' (' + tone + '). Introduce it as a real beat the player can engage or ignore.]' });
+            queue.push({ prio: 3, text: '[ARBITER EVENT — a hook fires: ' + type + ' (' + tone + '). Introduce it as a real beat the player can engage or ignore. It must fit the current tone, genre, and scale of the scene — no forced combat, no genre breaks. If it calls for a new minor NPC, invent one concretely.]' });
         }
         const su = rollTier(eng.surprise.dc, ENGINE_DEFAULTS.surprise.sides, ENGINE_DEFAULTS.surprise.decay, ENGINE_DEFAULTS.surprise.dc0, rng);
         eng.surprise.dc = su.nextDC;
         if (su.fired) {
             const type = EVENT_TYPES[Math.floor(rng() * EVENT_TYPES.length)];
             const tone = EVENT_TONES[Math.floor(rng() * EVENT_TONES.length)];
-            queue.push({ prio: 1, text: '[ARBITER EVENT HINT — weave one ambient beat into this reply: ' + type + ' (' + tone + '). Keep it subtle; do not derail the player\'s action.]' });
+            queue.push({ prio: 1, text: '[ARBITER EVENT HINT — weave one ambient beat into this reply: ' + type + ' (' + tone + '). Keep it subtle and true to the scene\'s tone; do not derail the player\'s action or force combat.]' });
         }
 
         if (!queue.length) return null;
@@ -927,12 +946,13 @@
         'Rules: 2-5 threads. Only currents grounded in the story so far. Do NOT include the player\'s own active goals — these are what moves WITHOUT the player.',
     ].join('\n');
 
-    async function seedThreads() {
+    async function seedThreads(opts) {
+        const o = opts || {};
         const c = ctx();
         const meta = getMeta();
-        if (!meta) { toast('warning', 'No chat open.'); return; }
+        if (!meta) { if (!o.auto) toast('warning', 'No chat open.'); return; }
         const chat = c.chat || [];
-        toast('info', 'Reading the story for background currents…', 'Arbiter threads');
+        if (!o.auto) toast('info', 'Reading the story for background currents…', 'Arbiter threads');
         const parts = [];
         let chars = 0;
         for (let i = chat.length - 1; i >= 0 && chars < 6000; i--) {
@@ -955,8 +975,11 @@
         } catch (e) { /* fine */ }
         const existing = meta.threads.map(t => t.name).join(', ') || 'none';
         const out = await callLLM(THREAD_SEED_SYSTEM, memoryBlock + '<existing_threads>' + existing + '</existing_threads>\n\n<transcript>\n' + parts.reverse().join('\n') + '\n</transcript>', 700, 45000);
-        const obj = extractJson(out);
-        if (!obj || !Array.isArray(obj.threads)) { toast('error', 'Thread seeding failed.'); return; }
+        let obj = null;
+        for (const cand of extractJsonCandidates(out, 5)) {
+            if (cand && Array.isArray(cand.threads)) { obj = cand; break; }
+        }
+        if (!obj) { if (o.auto) dlog('auto thread seed: nothing valid'); else toast('error', 'Thread seeding failed.'); return; }
         let added = 0;
         for (const t of obj.threads.slice(0, 6)) {
             const name = String(t.name || '').trim().slice(0, 60);
@@ -974,7 +997,8 @@
         }
         saveMeta();
         renderThreads();
-        toast('success', 'Threads added: ' + added + '.', 'Arbiter threads');
+        if (o.auto) { if (added) dlog('auto threads: +' + added); }
+        else toast('success', 'Threads added: ' + added + '.', 'Arbiter threads');
     }
 
     /* ------------------------------------------------------------------ */
@@ -1369,6 +1393,8 @@
         if (meta.duel && meta.duel.over) { meta.duel = null; renderHud(); }
         if (meta.battle && meta.battle.over) { meta.battle = null; renderHud(); }
 
+        if (genType === 'normal') meta.turnCount = (meta.turnCount || 0) + 1;
+
         // Snapshot the pre-turn world BEFORE any ticks or exchanges mutate it.
         const duelSnapshot = {
             d: meta.duel ? JSON.parse(JSON.stringify(meta.duel)) : null,
@@ -1455,7 +1481,13 @@
             if (inBattle) userPrompt += battleContext(meta);
 
             let rawOut = await callLLM(sysPrompt, userPrompt, 260, budget);
-            const normalize = (r) => inDuel ? normalizeDuelAdj(extractJson(r)) : (inBattle ? normalizeBattleAdj(extractJson(r)) : normalizeAdj(extractJson(r)));
+            const normalize = (r) => {
+                for (const cand of extractJsonCandidates(r, 5)) {
+                    const n = inDuel ? normalizeDuelAdj(cand) : (inBattle ? normalizeBattleAdj(cand) : normalizeAdj(cand));
+                    if (n) return n;
+                }
+                return null;
+            };
             let adj = normalize(rawOut);
 
             // One fast retry if the model returned junk and time remains.
@@ -1603,14 +1635,15 @@
         'Include the player character and every named character likely to oppose or be tested. 2-5 domains per actor is plenty. Rate from evidence in the transcript; when unsure, prefer 4-6.',
     ].join('\n');
 
-    async function seedSheet() {
+    async function seedSheet(opts) {
+        const o = opts || {};
         const c = ctx();
         const meta = getMeta();
-        if (!meta) { toast('warning', 'No chat open.'); return; }
+        if (!meta) { if (!o.auto) toast('warning', 'No chat open.'); return; }
         const chat = c.chat || [];
-        if (!chat.length) { toast('warning', 'Chat is empty.'); return; }
+        if (!chat.length) { if (!o.auto) toast('warning', 'Chat is empty.'); return; }
 
-        toast('info', 'Reading the story and building the sheet…', 'Arbiter seed');
+        if (!o.auto) toast('info', 'Reading the story and building the sheet…', 'Arbiter seed');
         const parts = [];
         let chars = 0;
         for (let i = chat.length - 1; i >= 0 && chars < 7000; i--) {
@@ -1643,25 +1676,78 @@
             parts.reverse().join('\n') + '\n</transcript>';
 
         const out = await callLLM(SEED_SYSTEM, userPrompt, 800, 45000);
-        const obj = extractJson(out);
-        if (!obj || typeof obj.actors !== 'object' || obj.actors === null) {
-            toast('error', 'Seeding failed — model returned no valid sheet.');
+        let obj = null;
+        for (const cand of extractJsonCandidates(out, 5)) {
+            if (cand && typeof cand.actors === 'object' && cand.actors !== null) { obj = cand; break; }
+        }
+        if (!obj) {
+            if (o.auto) dlog('auto sheet seed: no valid sheet returned');
+            else toast('error', 'Seeding failed — model returned no valid sheet.');
             return;
         }
         let added = 0;
         for (const [name, entry] of Object.entries(obj.actors)) {
             if (!name.trim() || !entry || typeof entry !== 'object') continue;
+            const key = name.trim();
+            const existing = findActor(meta, key);
             const clean = { default: clamp(entry.default ?? 5, 0, 10), domains: {} };
             for (const [d, v] of Object.entries(entry.domains || {})) {
                 const dk = String(d).toLowerCase().trim();
                 if (dk) clean.domains[dk] = clamp(v, 0, 10);
             }
-            meta.sheet.actors[name.trim()] = clean;
+            if (o.auto && existing) {
+                // Auto refresh NEVER overwrites ratings you may have tuned —
+                // it only fills in domains the actor didn't have yet.
+                for (const [dk, dv] of Object.entries(clean.domains)) {
+                    if (existing.domains?.[dk] === undefined) {
+                        existing.domains = existing.domains || {};
+                        existing.domains[dk] = dv;
+                    }
+                }
+                continue;
+            }
+            meta.sheet.actors[key] = clean;
             added++;
         }
         saveMeta();
         renderSheet();
-        toast('success', 'Sheet updated: ' + added + ' actor(s).', 'Arbiter seed');
+        if (o.auto) {
+            if (o.firstRun && added) toast('success', 'Arbiter learned the cast: ' + added + ' actor(s).', 'Auto seed');
+            else dlog('auto sheet refresh: +' + added + ' actors');
+        } else {
+            toast('success', 'Sheet updated: ' + added + ' actor(s).', 'Arbiter seed');
+        }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Auto-seeding: no commands needed                                    */
+    /* ------------------------------------------------------------------ */
+
+    let autoSeedRunning = false;
+
+    async function maybeAutoSeed() {
+        try {
+            const s = getSettings();
+            if (!s.enabled || !s.autoSeed || autoSeedRunning) return;
+            const meta = getMeta();
+            if (!meta) return;
+            const actorsN = Object.keys(meta.sheet.actors || {}).length;
+            const tc = meta.turnCount || 0;
+            const every = clamp(s.autoSeedEvery, 10, 500);
+            const firstRun = actorsN === 0 && tc >= 4;
+            const refresh = tc - (meta.lastAutoSeedAt ?? -999999) >= every;
+            if (!firstRun && !refresh) return;
+            autoSeedRunning = true;
+            meta.lastAutoSeedAt = tc;
+            saveMeta();
+            dlog('auto-seed pass at turn', tc, firstRun ? '(first run)' : '(refresh)');
+            await seedSheet({ auto: true, firstRun });
+            if (s.eventEngine) await seedThreads({ auto: true });
+        } catch (e) {
+            dlog('auto-seed failed', e);
+        } finally {
+            autoSeedRunning = false;
+        }
     }
 
     /* ------------------------------------------------------------------ */
@@ -1721,6 +1807,11 @@
         </select>
       </div>
       <div class="arb_hint">Mode: adjudicated = referee micro-call per check (accurate). Fast = zero-latency pre-rolled pool, no referee — the storyteller picks the footing (weaker, use for lag-free sessions). Preset: gritty = harsher tails, costlier wins · realistic = neutral curve · heroic = +1 player edge, halved disasters.</div>
+      <div class="arb_row">
+        <label class="checkbox_label"><input id="arb_autoseed" type="checkbox"><span>Auto seed</span></label>
+        <label>Refresh every</label><input id="arb_autoseedevery" type="number" min="10" max="500" class="text_pole arb_num">
+      </div>
+      <div class="arb_hint">Auto seed: Arbiter builds the capability sheet by itself once the chat has a few messages, then quietly re-reads story + memory every N turns to learn new faces and growth — it NEVER overwrites ratings you edited, only adds. Threads auto-seed too when the Event engine is on. /arbseed still forces a full manual update.</div>
       <div class="arb_row">
         <label class="checkbox_label"><input id="arb_autoduel" type="checkbox"><span>Auto duel</span></label>
         <label class="checkbox_label"><input id="arb_showhud" type="checkbox"><span>Duel HUD</span></label>
@@ -1790,6 +1881,11 @@
         <div id="arb_threads_reload" class="menu_button">Reload</div>
         <div id="arb_threads_seed" class="menu_button">Seed threads from story</div>
       </div>
+
+      <hr>
+      <b>Encounter table</b>
+      <div class="arb_hint">Comma-separated hook types the Encounter tier draws from; empty = built-in defaults (includes new-NPC strangers: beggars, couriers, pickpockets). Remove anything that doesn't fit your genre — hooks are always tone-guarded and never force combat.</div>
+      <textarea id="arb_enctypes" rows="2"></textarea>
 
       <hr>
       <b>Verb gate list</b>
@@ -1937,6 +2033,9 @@
         $('#arb_forcetag').val(s.forceTag).on('input', function () { s.forceTag = this.value; saveSettings(); });
         $('#arb_skiptag').val(s.skipTag).on('input', function () { s.skipTag = this.value; saveSettings(); });
         $('#arb_verbs').val(s.verbs).on('change', function () { s.verbs = this.value; saveSettings(); });
+        $('#arb_enctypes').val(s.encounterTypes).on('change', function () { s.encounterTypes = this.value; saveSettings(); });
+        $('#arb_autoseed').prop('checked', !!s.autoSeed).on('change', function () { s.autoSeed = this.checked; saveSettings(); });
+        $('#arb_autoseedevery').val(s.autoSeedEvery).on('input', function () { s.autoSeedEvery = clamp(this.value, 10, 500); saveSettings(); });
 
         $('#arb_mode').val(s.mode).on('change', function () { s.mode = this.value; saveSettings(); });
         $('#arb_preset').val(s.preset).on('change', function () { s.preset = this.value; saveSettings(); });
@@ -2098,7 +2197,7 @@
         const es = c.eventSource;
         const et = c.event_types || {};
         if (!es || !es.on) { warn('eventSource unavailable'); return; }
-        if (et.GENERATION_ENDED) es.on(et.GENERATION_ENDED, () => clearInjection());
+        if (et.GENERATION_ENDED) es.on(et.GENERATION_ENDED, () => { clearInjection(); maybeAutoSeed(); });
         if (et.GENERATION_STOPPED) es.on(et.GENERATION_STOPPED, () => clearInjection());
         if (et.CHAT_CHANGED) es.on(et.CHAT_CHANGED, () => {
             clearInjection();
