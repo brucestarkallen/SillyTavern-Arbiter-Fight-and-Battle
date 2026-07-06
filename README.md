@@ -354,6 +354,22 @@ terrifying monster can unnerve you in the same fight. (Ambient, non-combatant
 crowds are still narrated rather than individually simulated — but anyone you
 actually fight has a real, breakable nerve.)
 
+## Dominance hits harder, not just more often (v0.21)
+
+Every exchange used to strip a flat amount of poise no matter how lopsided it
+was. So a skilled brawler dismantling a squishy mage only won the roll *more
+often* — each hit still did the same chip damage, which forced the fiction into
+absurd narration (the mage shrugging off a groin kick, an elbow to the face, and
+a punch to the neck as if nothing happened). Now the **damage scales with the
+margin of victory**: the more one-sided the exchange, the more poise the
+winner's blow strips (capped, so nothing is unbounded). A big physical advantage
+over a fragile target now *wrecks* them in a hit or two, and a dominant decisive
+blow can outright end it — while a superior foe hits *you* just as hard, so
+there's no bias toward the player. Close fights (a margin of two or less) are
+completely unchanged, so the even-odds attrition that lets you genuinely lose is
+preserved. The net effect: the mechanics finally reflect what actually landed,
+so the storyteller narrates a wrecked opponent instead of inventing a hulk.
+
 ## Smarter Background world: story-tailored events (v0.20)
 
 The Background world already fires on pity timers (odds that climb the longer

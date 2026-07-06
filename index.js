@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.20.0';
+    const VERSION = '0.21.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -249,12 +249,23 @@
      * Side shape: { poise, injuries, momentum, opening }. Returns new sides
      * plus over/victor. Momentum: exchange winner +0.5 (cap 1), loser resets.
      */
-    function applyExchangeEffects(pl, op, tier) {
+    function applyExchangeEffects(pl, op, tier, margin) {
         const fx = EXCHANGE_EFFECTS[tier] || EXCHANGE_EFFECTS.FAILURE;
         const p = Object.assign({}, pl);
         const o = Object.assign({}, op);
-        p.poise = Math.round((p.poise - fx.self) * 2) / 2;
-        o.poise = Math.round((o.poise - fx.opp) * 2) / 2;
+        // A lopsided exchange lands HARDER, not just more often. `margin` is the
+        // signed Δ from the player/acting side's view; the bigger the winner's
+        // edge, the more poise their blow strips (a 7-melee brawler dismantling a
+        // 5-mage should wreck them, not chip). Symmetric — a superior foe hits
+        // the player just as hard. Close fights (|margin| ≤ 2) are unchanged, so
+        // the audited even-odds attrition economy is preserved. Bonus capped so
+        // no single blow is unbounded.
+        const m = Number(margin) || 0;
+        let selfDmg = fx.self, oppDmg = fx.opp;
+        if (fx.winner === 'self' && oppDmg > 0) oppDmg += clamp(m - 2, 0, 3);
+        else if (fx.winner === 'opp' && selfDmg > 0) selfDmg += clamp(-m - 2, 0, 3);
+        p.poise = Math.round((p.poise - selfDmg) * 2) / 2;
+        o.poise = Math.round((o.poise - oppDmg) * 2) / 2;
         if (fx.injureOpp) o.injuries = (o.injuries || 0) + 1;
         if (fx.injureSelf) p.injuries = (p.injuries || 0) + 1;
         if (fx.winner === 'self') {
@@ -1045,7 +1056,7 @@
         const delta = clamp((a.rating - a.injuries + a.momentum + openingBonus) - (e.rating - e.injuries + e.momentum) + combatantComposurePenalty(a) - combatantComposurePenalty(e) + extraDelta + preset.bonus, -13, 13);
         const _P = probFromDelta(delta); const _u = rngFloat();
         const tier = tieCheck(sliceOutcome(_P, _u, preset.mods), _P, _u, getSettings().tieBand);
-        const r = applyExchangeEffects(a, e, tier);
+        const r = applyExchangeEffects(a, e, tier, delta);
         Object.assign(a, r.player); Object.assign(e, r.opp);
         if (a.poise <= 0) a.standing = false;
         if (e.poise <= 0) e.standing = false;
@@ -1087,7 +1098,7 @@
                 const delta = clamp((mc.rating - mc.injuries + mc.momentum + openingBonus) - (target.rating - target.injuries + target.momentum) + mv.circumstance + preset.bonus + mAll + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                 const P = probFromDelta(delta); const u = rngFloat();
                 const tier = tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand);
-                const r = applyExchangeEffects(mc, target, tier);
+                const r = applyExchangeEffects(mc, target, tier, delta);
                 Object.assign(mc, r.player); Object.assign(target, r.opp);
                 if (mc.poise <= 0) mc.standing = false;
                 if (target.poise <= 0) target.standing = false;
@@ -1338,7 +1349,7 @@
                 const delta = clamp((mc.rating - mc.injuries + mc.momentum + openingBonus) - (target.rating - target.injuries + target.momentum) + mv.circumstance + F + mAll + preset.bonus + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                 const P = probFromDelta(delta); const u = rngFloat();
                 const tier = tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand);
-                const r = applyExchangeEffects(mc, target, tier);
+                const r = applyExchangeEffects(mc, target, tier, delta);
                 Object.assign(mc, r.player); Object.assign(target, r.opp);
                 if (mc.poise <= 0) mc.standing = false;
                 if (target.poise <= 0) target.standing = false;
@@ -1352,7 +1363,7 @@
                 const delta = clamp((acting.rating - acting.injuries + acting.momentum + openingBonus + cmdEdge) - (target.rating - target.injuries + target.momentum) + mv.circumstance + F + mAll + preset.bonus + combatantComposurePenalty(acting) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                 const P = probFromDelta(delta); const u = rngFloat();
                 const tier = tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand);
-                const r = applyExchangeEffects(acting, target, tier);
+                const r = applyExchangeEffects(acting, target, tier, delta);
                 Object.assign(acting, r.player); Object.assign(target, r.opp);
                 if (acting.poise <= 0) acting.standing = false;
                 if (target.poise <= 0) target.standing = false;
@@ -1985,7 +1996,7 @@
         const u = rngFloat();
         const tier = tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand);
 
-        const applied = applyExchangeEffects(duel.player, duel.opp, tier);
+        const applied = applyExchangeEffects(duel.player, duel.opp, tier, delta);
         duel.player = Object.assign({ name: duel.player.name, rating: duel.player.rating, maxPoise: duel.player.maxPoise }, applied.player);
         duel.opp = Object.assign({ name: duel.opp.name, rating: duel.opp.rating, maxPoise: duel.opp.maxPoise }, applied.opp);
         duel.round += 1;
