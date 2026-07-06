@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.24.0';
+    const VERSION = '0.25.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -422,7 +422,9 @@
         looksLikeRecovery, combatantComposurePenalty, applyMoraleShock, passiveComposureRecovery,
         compactRecent, budgetedTranscript, buildAdjUserPrompt, collectStoryContext,
         wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick,
-        resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, buildDuelDirective, buildDirective, getLastAdj: () => LAST_ADJ,
+        resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, buildDuelDirective, buildDirective,
+        startBattle, resolveBattleRound, startWar, resolveWarRound, normalizeBattleAdj, normalizeWarAdj, normalizeAdj,
+        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */

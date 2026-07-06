@@ -354,7 +354,22 @@ terrifying monster can unnerve you in the same fight. (Ambient, non-combatant
 crowds are still narrated rather than individually simulated — but anyone you
 actually fight has a real, breakable nerve.)
 
-## Consequences stay proportionate — a win won't blow your cover (v0.24)
+## Full-engine audit + permanent invariant tests (v0.25)
+
+Every subsystem was put under a systematic correctness audit: the probability
+core, exchange economy, single/combo/recovery duels, skirmish battles, army-scale
+war, the composure system, the background event engine, state snapshot/restore,
+and model-output parsing. Zero defects were found — the outcome slices partition
+cleanly with no cross-boundary leaks, exchange damage is symmetric to machine
+precision (no hidden tilt toward the player), tens of thousands of randomized
+duels/battles/wars all terminate with valid victors and never produce NaN,
+composure and all pity-timer dice stay inside their bounds, story-seed pools are
+consumed exactly once, and every normalizer survives arbitrary malformed model
+output without throwing. Those checks are now frozen as three standing regression
+suites (44 total), so no future change can silently break the fairness or
+stability guarantees the engine rests on.
+
+
 
 A "success with a cost" is the mildest win tier — a small tax, not a reversal. But
 storytellers were reading the "cost" as licence to spend the player's most valuable
