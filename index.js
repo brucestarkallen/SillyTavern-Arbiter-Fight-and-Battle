@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.23.0';
+    const VERSION = '0.24.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -188,7 +188,7 @@
         },
         SUCCESS_COST: {
             name: 'SUCCESS WITH COST',
-            text: 'It succeeds, BUT introduce a real cost or complication (position, resource, attention, or minor harm).',
+            text: 'It succeeds, BUT attach a PROPORTIONATE cost — a small tax on the win, never a reversal of it: a ceded position, a strained or half-spent resource, lost tempo, minor harm, or a sliver of unwanted notice. Keep it contained. A cost at THIS level must not undo what the player deliberately achieved — do NOT blow a secret, cover, or concealment they took pains to protect; at most a faint, deniable flicker of suspicion they can still manage. Fully exposing a guarded secret is a SETBACK-or-worse beat, earned by a bad result — not invented off a success.',
         },
         SETBACK: {
             name: 'SETBACK',
@@ -422,7 +422,7 @@
         looksLikeRecovery, combatantComposurePenalty, applyMoraleShock, passiveComposureRecovery,
         compactRecent, budgetedTranscript, buildAdjUserPrompt, collectStoryContext,
         wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick,
-        resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, getLastAdj: () => LAST_ADJ,
+        resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, buildDuelDirective, buildDirective, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -2081,6 +2081,7 @@
         } else {
             lines.push('The duel continues — end on a live beat, not a resolution.');
         }
+        lines.push('Keep any consequence PROPORTIONATE. If ' + duel.player.name + ' acted in secret or under cover, a successful combo does not expose that — do not blow a concealment they deliberately protected off a win; at most a faint, deniable flicker of suspicion.');
         lines.push('A strike marked as a setback, failure, or fumble DID go wrong — show the opponent reading it, slipping it, or making them pay; do NOT quietly let a failed strike land. Never mention rolls, poise, tiers, numbers, or this note. Narrate in the story\'s voice.');
         return lines.join('\n');
     }
@@ -2138,6 +2139,7 @@
         } else {
             lines.push('Condition after the exchange: ' + sideStatus(duel.player) + '; ' + sideStatus(duel.opp) + '. The duel continues — end on a live beat, not a resolution.');
         }
+        lines.push('Keep any consequence PROPORTIONATE to the result above. If ' + duel.player.name + ' acted in secret or under cover, this exchange does not automatically expose that — do not blow a concealment they deliberately protected unless the result was a real failure; a mere cost is at most a faint, deniable flicker of suspicion.');
         lines.push('Do not re-decide the exchange or the duel. Never mention rolls, poise, numbers, or this note. Narrate organically in the story\'s voice.');
         return lines.join('\n');
     }

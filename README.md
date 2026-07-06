@@ -354,7 +354,21 @@ terrifying monster can unnerve you in the same fight. (Ambient, non-combatant
 crowds are still narrated rather than individually simulated — but anyone you
 actually fight has a real, breakable nerve.)
 
-## Combos resolve strike by strike (v0.23)
+## Consequences stay proportionate — a win won't blow your cover (v0.24)
+
+A "success with a cost" is the mildest win tier — a small tax, not a reversal. But
+storytellers were reading the "cost" as licence to spend the player's most valuable
+hidden asset: on a *secretly* used power scored SUCCESS-WITH-COST, the narration
+would decide the secret got noticed and expose it outright. That's a
+disproportionate consequence — fully blowing a concealment the player deliberately
+protected is a real-*failure* beat, not something a success should cost. Arbiter now
+tells the storyteller to keep every consequence proportionate to the result, and
+that a win (or a minor cost) must **not** expose a secret, cover, or concealment the
+player took pains to protect — at most a faint, deniable flicker of suspicion they
+can still manage. A genuine failure can still blow your cover; a success no longer
+will. Applied across duel, combo, and general-check directives.
+
+
 
 When your message chains several distinct attacks — *disrupt his spell, then a
 groin kick, then an elbow, then a punch to the neck* — Arbiter no longer flattens
