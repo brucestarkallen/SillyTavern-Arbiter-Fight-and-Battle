@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.21.0';
+    const VERSION = '0.22.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -2850,8 +2850,9 @@
         '{"actors": {"<Name>": {"default": <0-10>, "domains": {"<domain>": <0-10>, ...}}, ...}}',
         '',
         'Rating guide (by effective threat, ANY kind of combatant — person, beast, monster, machine, alien): 2 untrained, 4 trained, 5 competent professional, 6 veteran, 7 elite, 8 master, 9 legendary, 10 apex. Rate creatures by how dangerous they are, not their species: a feral dog 3, a warhound 5, a dire beast or trained monster 7, an ancient dragon or apex predator 9-10. A domain like "melee" for a beast means its natural weapons (claws, fangs, breath).',
+        'CALIBRATE TO THE STORY\'S OWN HIERARCHY: the labels above are a baseline, but if the setting has ranks, tiers, classes, or a clear pecking order (school rankings like A/B/C, tournament seeding, dueling classes, a military chain, a stated power-level system), place each character WITHIN it. Someone at or near the top of that structure — a top-ranked or high-tier student, a champion, an ace, a captain, a feared name — belongs at the HIGH end (7-9), even if words like "student" or "young" make them sound junior. Read the ranking, not the job title.',
         'Domains are lowercase single words (melee, ranged, stealth, social, athletics, intellect, willpower, pilot, craft — invent others only if the story clearly needs them).',
-        'Include the player character AND every named CHARACTER in the story — allies, rivals, mentors, recurring NPCs, and people listed in <known_characters> — not only those active in the recent transcript. A large cast is expected; cover everyone named and do NOT silently drop characters to save space. 2-4 domains per actor is plenty. Rate from evidence in the transcript and memory; when unsure, prefer 4-6. Merge obvious duplicates or aliases into a single entry.',
+        'Include the player character AND every named CHARACTER in the story — allies, rivals, mentors, recurring NPCs, and people listed in <known_characters> — not only those active in the recent transcript. A large cast is expected; cover everyone named and do NOT silently drop characters to save space. 2-4 domains per actor is plenty. Rate from evidence in the transcript and memory. When unsure about an ordinary or background figure, prefer 4-6 — but a named rival, antagonist, boss, or anyone the player faces in a SERIOUS fight is a genuine challenge: rate them as a PEER of the player or stronger unless the fiction plainly shows they are outmatched. Never default a named threat to average. Merge obvious duplicates or aliases into a single entry.',
         'Rate each character at their CURRENT power level as of the latest events. If the story shows someone has trained, leveled up, unlocked new power, or grown stronger since earlier, reflect that higher rating now — a character who was trained (4) and has since become elite should be rated elite (7). The <existing_sheet> shows prior ratings; when the fiction clearly shows growth beyond them, rate the new, higher level.',
         'CRITICAL: actors are PEOPLE and creatures ONLY. Never create an entry for a place, city, academy, school, house, clan, faction, organization, team name, region, or title. If a name in <known_characters> is a location or institution (e.g. an academy or a noble house), leave it out entirely. When a name is ambiguous, include it only if the story clearly uses it as an individual who acts and fights.',
     ].join('\n');
