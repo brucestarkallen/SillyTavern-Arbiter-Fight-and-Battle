@@ -354,7 +354,29 @@ terrifying monster can unnerve you in the same fight. (Ambient, non-combatant
 crowds are still narrated rather than individually simulated — but anyone you
 actually fight has a real, breakable nerve.)
 
-## Dominance hits harder, not just more often (v0.21)
+## Combos resolve strike by strike (v0.23)
+
+When your message chains several distinct attacks — *disrupt his spell, then a
+groin kick, then an elbow, then a punch to the neck* — Arbiter no longer flattens
+the whole thing into a single "success." Each strike is now scored on its **own
+footing**, given what came before and the opponent reacting between blows, so you
+get a real sequence of outcomes: the spell disruption lands clean, the groin kick
+is slipped, the elbow connects hard, the neck punch is read and countered. The
+storyteller is handed each strike's result in order and told to honour it — a
+strike marked as fumbled *did* go wrong, and the opponent makes you pay for it,
+instead of the whole flourish quietly succeeding.
+
+Crucially, a combo is **high-variance, not win-more**. The chain still collapses to
+a single exchange's worth of poise (never four free hits), the per-strike results
+map to an overall outcome that is *symmetric in severity* (a chain that lands big
+is as decisive as a chain that falls apart is disastrous), and a fumbled early
+strike hands the opponent the initiative. Simulated over thousands of duels this
+comes out fair: at even odds a combo wins the same ~50% a single action does, and
+when you're **outmatched a combo actively backfires** — you lose more for
+overcommitting than you would with a simple attack. Chaining presses a real
+advantage; it never manufactures one.
+
+
 
 Every exchange used to strip a flat amount of poise no matter how lopsided it
 was. So a skilled brawler dismantling a squishy mage only won the roll *more

@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.22.0';
+    const VERSION = '0.23.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -421,7 +421,8 @@
         STRATAGEM_EFFECTS, tieCheck, ratingFor, composurePenalty, applyComposureChange,
         looksLikeRecovery, combatantComposurePenalty, applyMoraleShock, passiveComposureRecovery,
         compactRecent, budgetedTranscript, buildAdjUserPrompt, collectStoryContext,
-        wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick, getLastAdj: () => LAST_ADJ,
+        wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick,
+        resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -1830,6 +1831,7 @@
         ' "self_composure": <integer -2..2 — how THIS moment affects the PLAYER\'s nerve in the fight: negative under terror or horror, positive on a grounding surge. 0 usually.>",',
         ' "action": "<the move, 3-10 words>",',
         ' "circumstance": <integer -3..3>,',
+        ' "sequence": null | [{"strike": "<short label, 2-6 words>", "circumstance": <integer -3..3>}],',
         ' "why": "<one short clause>",',
         ' "combat_ended": true|false}',
         '',
@@ -1842,6 +1844,7 @@
         '- circumstance rewards concrete tactics, exploited weaknesses and openings (+); penalizes recklessness noted in the fiction, bad footing, impairment (-). 0 if nothing notable.',
         '- circumstance is TWO-SIDED and impartial: weigh what the OPPONENT is doing as much as the player. If the opponent has the better position, has set a trap, is pressing an advantage, or is simply the more dangerous fighter seizing control of the exchange, that is NEGATIVE circumstance for the player even when the player\'s own move is sound. Do not grade only the player\'s cleverness upward; a good move into a worse position still nets negative. Judge the exchange as a neutral observer would, not from the player\'s hopes.',
         '- combat_ended=true ONLY if the fiction has already clearly ended the fight (someone fled, yielded, was separated, or the scene left combat).',
+        '- sequence: fill this ONLY when the player\'s single message is a genuine CHAIN of 2+ distinct offensive sub-actions meant to land in order (a combo — e.g. disrupt his spell, THEN a groin kick, THEN an elbow, THEN a neck punch). List each sub-action as its own strike with its own circumstance, judged on its OWN footing given what came before AND the opponent reacting between strikes. A combo is HIGH-RISK: do not assume every strike lands; a late strike is only as good as the setup that survived to it, and a bad strike hands the opponent the initiative. 2-5 strikes. Leave null for a single action — never invent a combo the player did not write, and still fill "action"/"circumstance" for the move as a whole.',
     ].join('\n');
 
     function normalizeDuelAdj(obj) {
@@ -1849,6 +1852,11 @@
         if (obj.combat_ended === true) return { combat_ended: true };
         if (obj.exchange === false) return { exchange: false };
         if (obj.exchange !== true) return null;
+        const rawSeq = Array.isArray(obj.sequence)
+            ? obj.sequence.map(x => (x && typeof x === 'object' && (x.strike || x.step))
+                ? { strike: String(x.strike || x.step).slice(0, 60), circumstance: clamp(Math.round(Number(x.circumstance) || 0), -3, 3) }
+                : null).filter(Boolean).slice(0, 5)
+            : null;
         return {
             exchange: true,
             moveKind: obj.move_kind === 'recover' ? 'recover' : 'attack',
@@ -1856,6 +1864,7 @@
             selfComposure: clamp(Math.round(Number(obj.self_composure) || 0), -2, 2),
             action: String(obj.action || 'the exchange').slice(0, 140),
             circumstance: clamp(Math.round(Number(obj.circumstance) || 0), -3, 3),
+            sequence: (rawSeq && rawSeq.length >= 2) ? rawSeq : null,
             why: String(obj.why || '').slice(0, 160),
         };
     }
@@ -2005,6 +2014,75 @@
             duel.victor = applied.victor;
         }
         return { aR: effP, oR: effO, oppLabel: duel.opp.name, delta, P, u, tier, opening: openingBonus > 0 };
+    }
+
+    /** Resolve a described COMBO (2+ strikes) as ONE exchange with per-strike
+     *  texture. Each strike rolls on its own footing; a landed strike opens the
+     *  next, a missed or fumbled one leaves the player exposed so the chain can
+     *  collapse. The whole chain maps to a SINGLE overall exchange outcome (one
+     *  exchange's worth of poise, margin-scaled) — so a combo is HIGH-RISK
+     *  (landing a full chain is harder than one roll, and a bad strike lets the
+     *  opponent counter), never a free damage multiplier. */
+    function resolveDuelSequence(meta, adj) {
+        const duel = meta.duel;
+        const preset = getPreset();
+        const s = getSettings();
+        const openingBonus = duel.player.opening ? 1 : 0; duel.player.opening = false;
+        const oppOpeningBonus = duel.opp.opening ? 1 : 0; duel.opp.opening = false;
+        const compPen = composurePenalty(meta);
+        const oppCompPen = combatantComposurePenalty(duel.opp);
+        const effO = duel.opp.rating - duel.opp.injuries + duel.opp.momentum + oppOpeningBonus;
+        const scoreOf = { DECISIVE: 2, SUCCESS: 1, SUCCESS_COST: 1, TRADE: 0, STALEMATE: 0, SETBACK: -1, FAILURE: -1, DISASTER: -2 };
+        const seq = adj.sequence, n = seq.length;
+        const steps = [];
+        let carry = openingBonus, net = 0, lastU = 0;
+        for (const st of seq) {
+            const effP = duel.player.rating - duel.player.injuries + duel.player.momentum + carry;
+            const delta = clamp(effP - effO + st.circumstance + (duel.scaleMismatch || 0) + compPen - oppCompPen + preset.bonus, -13, 13);
+            const P = probFromDelta(delta), u = rngFloat(); lastU = u;
+            const tier = tieCheck(sliceOutcome(P, u, preset.mods), P, u, s.tieBand);
+            const sc = scoreOf[tier] ?? 0; net += sc;
+            if (sc > 0) carry = Math.min(2, carry + 1);                 // a landed strike sets up the next
+            else if (tier === 'DISASTER') carry = Math.max(-2, carry - 2); // a fumble leaves them wide open
+            else if (sc < 0) carry = Math.max(-2, carry - 1);
+            steps.push({ strike: st.strike, tier });
+        }
+        // Whole-chain outcome, SYMMETRIC in severity so a combo is high-variance
+        // but NOT win-more: net +k maps to a win as severe as net -k maps to a
+        // loss (DECISIVE↔DISASTER, SUCCESS↔FAILURE). Landing a full combo is
+        // genuinely hard; a chain that fell apart flips to the opponent.
+        const frac = net / (2 * n);
+        const overall = frac >= 0.5 ? 'DECISIVE' : frac > 0 ? 'SUCCESS' : frac === 0 ? 'TRADE' : frac > -0.5 ? 'FAILURE' : 'DISASTER';
+        const avgCirc = seq.reduce((t, x) => t + x.circumstance, 0) / n;
+        const margin = clamp((duel.player.rating - duel.player.injuries + duel.player.momentum) - effO + avgCirc + (duel.scaleMismatch || 0) + compPen - oppCompPen + preset.bonus, -13, 13);
+        const applied = applyExchangeEffects(duel.player, duel.opp, overall, margin);
+        duel.player = Object.assign({ name: duel.player.name, rating: duel.player.rating, maxPoise: duel.player.maxPoise }, applied.player);
+        duel.opp = Object.assign({ name: duel.opp.name, rating: duel.opp.rating, maxPoise: duel.opp.maxPoise }, applied.opp);
+        duel.round += 1;
+        if (applied.over) { duel.over = true; duel.victor = applied.victor; }
+        return { steps, overall, tier: overall, aR: duel.player.rating, oR: effO, delta: margin, P: probFromDelta(margin), u: lastU, combo: true, over: applied.over, victor: applied.victor };
+    }
+
+    function buildDuelSequenceDirective(meta, adj, res) {
+        const duel = meta.duel;
+        const strikeLines = res.steps.map(st => { const t = TIERS[st.tier] || TIERS.FAILURE; return '  • ' + st.strike + ' → ' + t.name; }).join('\n');
+        const ov = TIERS[res.overall] || TIERS.FAILURE;
+        const lines = [
+            '[ARBITER — duel, round ' + duel.round + ': ' + duel.player.name + ' commits to a combo]',
+            'Narrate the combo strike by strike, IN ORDER, honoring each result exactly:',
+            strikeLines,
+            'Taken together the exchange is a ' + ov.name + ' — ' + ov.text,
+            sideStatus(duel.opp) + '. ' + sideStatus(duel.player) + '.',
+        ];
+        if (duel.over) {
+            lines.push(res.victor === 'player'
+                ? duel.opp.name + ' is beaten — narrate the finish the fiction demands (downed, disarmed, dropped). Not negotiable.'
+                : duel.player.name + ' is beaten — narrate how ' + duel.opp.name + ' turns the failed combo into the finish. Not negotiable.');
+        } else {
+            lines.push('The duel continues — end on a live beat, not a resolution.');
+        }
+        lines.push('A strike marked as a setback, failure, or fumble DID go wrong — show the opponent reading it, slipping it, or making them pay; do NOT quietly let a failed strike land. Never mention rolls, poise, tiers, numbers, or this note. Narrate in the story\'s voice.');
+        return lines.join('\n');
     }
 
     function sideStatus(side) {
@@ -2700,11 +2778,13 @@
                     saveMeta();
                     return;
                 }
-                const res = resolveDuelExchange(meta, adj.circumstance, adj.moveKind);
+                const res = (adj.sequence && adj.sequence.length >= 2)
+                    ? resolveDuelSequence(meta, adj)
+                    : resolveDuelExchange(meta, adj.circumstance, adj.moveKind);
                 // Fear/steel from this exchange shifts each fighter's nerve.
                 if (adj.oppComposure && meta.duel && meta.duel.opp) shiftCombatantComposure(meta.duel.opp, adj.oppComposure);
                 if (adj.selfComposure) applyComposureChange(meta, adj.selfComposure);
-                const directive = buildDuelDirective(meta, adj, res);
+                const directive = res.combo ? buildDuelSequenceDirective(meta, adj, res) : buildDuelDirective(meta, adj, res);
                 setInjection(directive);
                 commitCache(directive, res.tier);
                 pushLog(meta, { action: adj.action, domain: meta.duel.domain, actor: meta.duel.player.name, circumstance: adj.circumstance, why: adj.why }, res, meta.duel.round);
