@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.19.0';
+    const VERSION = '0.20.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -410,7 +410,7 @@
         STRATAGEM_EFFECTS, tieCheck, ratingFor, composurePenalty, applyComposureChange,
         looksLikeRecovery, combatantComposurePenalty, applyMoraleShock, passiveComposureRecovery,
         compactRecent, budgetedTranscript, buildAdjUserPrompt, collectStoryContext,
-        wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, getLastAdj: () => LAST_ADJ,
+        wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -1501,16 +1501,19 @@
         const w = rollTier(eng.world.dc, ENGINE_DEFAULTS.world.sides, ENGINE_DEFAULTS.world.decay, ENGINE_DEFAULTS.world.dc0, rng);
         eng.world.dc = w.nextDC;
         if (w.fired) {
-            const who = WORLD_WHO[Math.floor(rng() * WORLD_WHO.length)];
-            const what = WORLD_WHAT[Math.floor(rng() * WORLD_WHAT.length)];
-            const where = WORLD_WHERE[Math.floor(rng() * WORLD_WHERE.length)];
-            queue.push({ prio: 4, text: '[ARBITER EVENT — seismic shift: ' + who + ' ' + what + ', ' + where + '. Land it as news or rumor first unless the fiction puts it on top of the player; it must fit the setting\'s tone and scale.]' });
+            // Prefer a bespoke, story-seeded shift (consumed once); else generic.
+            let shift;
+            if (Array.isArray(meta.worldSeeds) && meta.worldSeeds.length) shift = meta.worldSeeds.shift();
+            else shift = WORLD_WHO[Math.floor(rng() * WORLD_WHO.length)] + ' ' + WORLD_WHAT[Math.floor(rng() * WORLD_WHAT.length)] + ', ' + WORLD_WHERE[Math.floor(rng() * WORLD_WHERE.length)];
+            queue.push({ prio: 4, text: '[ARBITER EVENT — seismic shift: ' + shift + '. Land it as news or rumor first unless the fiction puts it on top of the player; it must fit the setting\'s tone and scale.]' });
         }
         const e = rollTier(eng.encounter.dc, ENGINE_DEFAULTS.encounter.sides, ENGINE_DEFAULTS.encounter.decay, ENGINE_DEFAULTS.encounter.dc0, rng);
         eng.encounter.dc = e.nextDC;
         if (e.fired) {
-            const table = getEncounterTypes();
-            const type = table[Math.floor(rng() * table.length)];
+            // Prefer a bespoke, story-seeded encounter (consumed once); else the table.
+            let type;
+            if (Array.isArray(meta.encounterSeeds) && meta.encounterSeeds.length) type = meta.encounterSeeds.shift();
+            else { const table = getEncounterTypes(); type = table[Math.floor(rng() * table.length)]; }
             const tone = ENCOUNTER_TONES[Math.floor(rng() * ENCOUNTER_TONES.length)];
             queue.push({ prio: 3, text: '[ARBITER EVENT — a hook fires: ' + type + ' (' + tone + '). Introduce it as a real beat the player can engage or ignore. It must fit the current tone, genre, and scale of the scene — no forced combat, no genre breaks. If it calls for a new minor NPC, invent one concretely.]' });
         }
@@ -1667,15 +1670,40 @@
         return hits;
     }
 
+    /** Preferred path: ST's OWN activation engine. It handles constant, keyword
+     *  AND vectorized entries (the latter via the Vector Storage extension), so
+     *  this is the "perfect" route for vector search. dryRun=true → no state
+     *  change. Returns the activated text, or '' if the API is absent/empty. */
+    async function wiViaEngine(scanText, limitChars) {
+        const c = ctx();
+        if (typeof c.getWorldInfoPrompt !== 'function') return '';
+        try {
+            // Feed the action + recent story as the scan chat so keyword AND
+            // vector activation key off what's actually happening now.
+            const scanChat = String(scanText || '').split('\n').map(x => x.trim()).filter(Boolean);
+            const res = await c.getWorldInfoPrompt(scanChat, 100000, true);
+            let str = '';
+            if (typeof res === 'string') str = res;
+            else if (res && typeof res === 'object') str = [res.worldInfoString, res.worldInfoBefore, res.worldInfoAfter].filter(Boolean).join('\n');
+            str = String(str || '').trim();
+            return str ? str.slice(0, limitChars || 8000) : '';
+        } catch (e) { dlog('getWorldInfoPrompt failed; using manual activation', e); return ''; }
+    }
+
     async function collectWorldInfoBlock(scanText, limitChars) {
-        if (!getSettings().adjIncludeWorld || !wiApiAvailable()) return '';
+        if (!getSettings().adjIncludeWorld) return '';
+        const cap = limitChars || 8000;
+        // Try ST's engine first (covers vectorized entries).
+        const viaEngine = await wiViaEngine(scanText, cap);
+        if (viaEngine) return '<world_info>\n' + viaEngine + '\n</world_info>';
+        // Fallback: manual constant + keyword/selective activation from loadWorldInfo.
+        if (!wiApiAvailable()) return '';
         const books = wiResolveBooks();
         if (!books.length) return '';
         const all = [];
         for (const b of books) { const data = await wiLoad(b); if (data) for (const e of Object.values(data.entries)) all.push(e); }
         const hits = wiActivateEntries(all, scanText);
         if (!hits.length) return '';
-        const cap = limitChars || 8000;
         const parts = []; let used = 0;
         for (const h of hits) {
             const piece = (h.title ? h.title + ': ' : '') + h.content;
@@ -1707,11 +1735,11 @@
     }
 
     const THREAD_SEED_SYSTEM = [
-        'You read a roleplay transcript plus its memory notes and propose BACKGROUND CURRENTS: off-screen storylines that should advance on their own (a rival\'s scheme, an investigation closing in, a faction\'s move, an NPC\'s ambition). Output STRICT JSON only, one object, no markdown.',
+        'You read a roleplay transcript plus its memory notes and propose three things: (1) BACKGROUND CURRENTS — off-screen storylines that advance on their own (a rival\'s scheme, an investigation closing in, a faction\'s move, an NPC\'s ambition); (2) ENCOUNTERS — specific, story-grounded people or hooks that could plausibly cross the player\'s path next, given WHERE they are and WHO/WHAT is around them right now; (3) WORLD EVENTS — larger shifts (news, rumor, a faction move, a disaster) that fit this world and could ripple in. Output STRICT JSON only, one object, no markdown.',
         '',
-        'Schema: {"threads": [{"name": "<short name>", "desc": "<one line>", "maxRung": <5-12>, "bias": <-2..2, how strongly the world favors it>, "pace": <2-4, turns between heartbeats>}]}',
+        'Schema: {"threads": [{"name": "<short name>", "desc": "<one line>", "maxRung": <5-12>, "bias": <-2..2, how strongly the world favors it>, "pace": <2-4, turns between heartbeats>}], "encounters": ["<a concrete, setting-fitting hook naming a plausible person or situation for THIS story and THIS location, e.g. \'a rain-soaked courier from the Vermillion house with an urgent summons\'>"], "world_events": ["<a concrete seismic beat grounded in this world, e.g. \'the northern front collapses and refugees begin flooding the capital\'>"]}',
         '',
-        'Rules: 2-5 threads. Only currents grounded in the story so far. Do NOT include the player\'s own active goals — these are what moves WITHOUT the player.',
+        'Rules: 2-5 threads. 3-6 encounters and 2-4 world_events, each SPECIFIC to this story\'s setting, cast, tone, and the player\'s current situation — never generic filler, never forced combat. Encounters are people or hooks the player can engage or ignore. Do NOT include the player\'s own active goals — all of these are what moves WITHOUT the player.',
     ].join('\n');
 
     async function seedThreads(opts) {
@@ -1742,11 +1770,11 @@
         if (activityCanceled()) { if (!o.auto) toast('warning', 'Thread seed canceled.'); return; }
         let obj = null;
         for (const cand of extractJsonCandidates(out, 5)) {
-            if (cand && Array.isArray(cand.threads)) { obj = cand; break; }
+            if (cand && (Array.isArray(cand.threads) || Array.isArray(cand.encounters) || Array.isArray(cand.world_events))) { obj = cand; break; }
         }
         if (!obj) { if (o.auto) dlog('auto thread seed: nothing valid'); else toast('error', 'Thread seeding failed.'); return; }
         let added = 0;
-        for (const t of obj.threads.slice(0, 6)) {
+        for (const t of (obj.threads || []).slice(0, 6)) {
             const name = String(t.name || '').trim().slice(0, 60);
             if (!name) continue;
             if (meta.threads.some(x => x.name.toLowerCase() === name.toLowerCase())) continue;
@@ -1759,6 +1787,17 @@
                 lastTickAt: meta.tickCount, done: false,
             });
             added++;
+        }
+        // Story-tailored pools for the encounter/world tiers — bespoke to this
+        // scene, refreshed each seed, so the world fires CONTEXTUAL beats instead
+        // of generic table draws. Only replace when the model supplied a pool.
+        if (Array.isArray(obj.encounters)) {
+            const pool = obj.encounters.map(x => String(x || '').trim().slice(0, 220)).filter(Boolean).slice(0, 8);
+            if (pool.length) meta.encounterSeeds = pool;
+        }
+        if (Array.isArray(obj.world_events)) {
+            const pool = obj.world_events.map(x => String(x || '').trim().slice(0, 220)).filter(Boolean).slice(0, 6);
+            if (pool.length) meta.worldSeeds = pool;
         }
         saveMeta();
         renderThreads();
@@ -2398,6 +2437,8 @@
                 if (snap.t !== undefined) meta.threads = copy(snap.t) || [];
                 if (snap.e !== undefined && snap.e) meta.engines = copy(snap.e);
                 if (snap.tc !== undefined) meta.tickCount = snap.tc;
+                if (snap.es !== undefined) meta.encounterSeeds = snap.es ? snap.es.slice() : undefined;
+                if (snap.ws !== undefined) meta.worldSeeds = snap.ws ? snap.ws.slice() : undefined;
             } else {
                 meta.duel = copy(snap); // legacy v0.2 snapshot: duel-or-null
             }
@@ -2426,6 +2467,8 @@
             t: JSON.parse(JSON.stringify(meta.threads || [])),
             e: meta.engines ? JSON.parse(JSON.stringify(meta.engines)) : null,
             tc: meta.tickCount || 0,
+            es: Array.isArray(meta.encounterSeeds) ? meta.encounterSeeds.slice() : null,
+            ws: Array.isArray(meta.worldSeeds) ? meta.worldSeeds.slice() : null,
         };
 
         // Background world: replay on the same message, tick on new ones.
@@ -2995,7 +3038,7 @@
         <div class="arb_row">
           <label>Lorebook(s)</label><input id="arb_adjworldbooks" type="text" class="text_pole" placeholder="empty = active book(s) from ST's dropdown">
         </div>
-        <div class="arb_hint">World Info activates like ST does — constant ("blue-circle") entries always, keyword/selective entries when their words appear in your action or the recent story. Vector-only entries (no keywords) aren't activated here; ask if you want true vector search. Leave Lorebook(s) empty to auto-use your active book(s), or pin specific ones by name (comma-separated).</div>
+        <div class="arb_hint">Uses SillyTavern's own activation when available — constant, keyword AND vectorized entries all fire exactly as ST decides. If that API isn't exposed, it falls back to reading your active book(s) directly (constant + keyword only). Leave Lorebook(s) empty to auto-use your active book(s), or pin specific ones by name (comma-separated). Tap "View last check" to confirm which entries fired.</div>
         <div class="arb_row">
           <label class="checkbox_label"><input id="arb_adjfull" type="checkbox"><span>Feed the whole chat (budgeted) instead of last N</span></label>
         </div>
@@ -3498,6 +3541,8 @@
         };
         meta.tickCount = 0;
         meta.turnCount = 0;
+        delete meta.encounterSeeds;
+        delete meta.worldSeeds;
         meta.lastAutoSeedAt = -999999;
         saveMeta();
         renderSheet(); renderThreads(); renderLog(); renderHud();

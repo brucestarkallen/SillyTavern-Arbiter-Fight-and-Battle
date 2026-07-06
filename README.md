@@ -354,6 +354,22 @@ terrifying monster can unnerve you in the same fight. (Ambient, non-combatant
 crowds are still narrated rather than individually simulated — but anyone you
 actually fight has a real, breakable nerve.)
 
+## Smarter Background world: story-tailored events (v0.20)
+
+The Background world already fires on pity timers (odds that climb the longer
+nothing happens) and never during a fight. What changed is *what* it fires. The
+encounter and world-event tiers used to draw from a generic built-in table.
+Now the **seeder** — which already runs event-driven (post-fight, reading your
+story and memory, the same smartness that builds the capability sheet) — also
+produces a small pool of **bespoke, story-grounded hooks**: specific people who
+could plausibly cross your path given where you are, and seismic shifts that fit
+this exact world. When a tier fires it draws from that pool (consumed once each,
+so no repeats), and only falls back to the generic table when the pool runs dry.
+Each re-seed refreshes the pool against the current scene. The result: the world
+throws beats that belong to *your* story, not filler — and it costs nothing
+extra per turn, because the thinking happens at seed time. Fully automatic, no
+commands.
+
 ## Referee context payload + inspector (v0.17)
 
 By default the referee runs **lean**: it reads its own neutral system prompt, the
@@ -372,12 +388,12 @@ But you can now **opt into a wider payload** per check, with granular toggles
   excludes the card's instruction-type fields (main-prompt override,
   post-history instructions) — like the system prompt, those are bias vectors,
   not physical facts.
-- **Include World Info** (v0.19) — feeds activated lorebook entries into every
-  check, the way SillyTavern activates them: constant ("blue-circle") entries
-  always, and keyword/selective entries when their words appear in your action
-  or the recent story. Reads your active book(s) from ST's dropdown (or pin
-  specific books by name). Vector-only entries (no keywords) aren't activated
-  here — they need the embedding engine; ask if you want true vector search.
+- **Include World Info** (v0.19, vector in v0.20) — feeds activated lorebook
+  entries into every check. It uses SillyTavern's OWN activation engine when
+  available, so constant, keyword AND **vectorized** (semantic) entries all fire
+  exactly as ST decides; if that API isn't exposed it falls back to reading your
+  active book(s) directly (constant + keyword). Pin specific books by name or
+  leave empty to use your active book(s).
 - **Feed the whole chat (budgeted)** — replaces the last-N slice with as much of
   the transcript as fits a char budget, at fuller width than the lean clip.
 - **Include hidden ("ghosted") messages** — surfaces messages you've hidden from
