@@ -31,7 +31,7 @@ delete md.note_prompt;
   md.arbiter = { sheet: { actors: {} }, log: [], oneShot: null, cache: null };
   await I([{ is_user: true, mes: 'a calm morning at the academy', send_date: 'd1' }], 0, () => {}, 'normal');
   ok('eventEngine defaults ON (engines ticked on chatter)', md.arbiter.engines && md.arbiter.engines.surprise.dc <= 95);
-  ok('ctxMsgs default is 6', fresh.arbiter.ctxMsgs === 6);
+  ok('ctxMsgs default is 10 (full immediate window)', fresh.arbiter.ctxMsgs === 10);
   ok('preset default realistic, mode adjudicated', fresh.arbiter.preset === 'realistic' && fresh.arbiter.mode === 'adjudicated');
 
   console.log(fails === 0 ? 'ALL V7 TESTS PASSED' : fails + ' FAILURES'); process.exit(fails ? 1 : 0);

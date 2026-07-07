@@ -11,6 +11,6 @@ let fails = 0; const ok = (n, c) => { console.log(n + ':', c ? 'OK' : 'FAIL'); i
   await globalThis.arbiterInterceptor([{ is_user: true, mes: 'hello', send_date: 'x' }], 0, () => {}, 'normal');
   ok('default memory ingest is 60k (full Summaryception context)', fresh.arbiter.seedMemoryK === 60);
   ok('default transcript window is 80k', fresh.arbiter.seedTranscriptK === 80);
-  ok('default seed output is 4000 tokens', fresh.arbiter.seedOutTokens === 4000);
+  ok('default seed output is 6000 tokens (large-cast headroom)', fresh.arbiter.seedOutTokens === 6000);
   console.log(fails === 0 ? 'ALL V12 TESTS PASSED' : fails + ' FAILURES'); process.exit(fails ? 1 : 0);
 })().catch(e => { console.error('THREW', e); process.exit(1); });

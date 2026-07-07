@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.26.2';
+    const VERSION = '0.27.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -424,7 +424,7 @@
         wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick,
         resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, buildDuelDirective, buildDirective,
         startBattle, resolveBattleRound, startWar, resolveWarRound, normalizeBattleAdj, normalizeWarAdj, normalizeAdj, startDuel,
-        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, getLastAdj: () => LAST_ADJ,
+        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -458,12 +458,12 @@
         enabled: true,
         profileId: '',            // Connection Manager profile for the adjudicator
         seedProfileId: '',        // OPTIONAL separate profile for seeding (bulk/background); empty = use adjudicator profile
-        timeoutMs: 6000,          // hard budget for the micro-call; on expiry: skip
-        ctxMsgs: 6,               // recent messages given to the adjudicator (lean mode)
+        timeoutMs: 12000,         // generous budget so a rich-context check never gets cut off
+        ctxMsgs: 10,              // recent messages given to the adjudicator (full immediate window)
         // ── Referee context payload (all opt-in; the referee ALWAYS uses its own
         //    neutral system prompt, never SillyTavern's, so that is never included) ──
-        adjIncludeMemory: false,  // feed the full memory stack (Summaryception, ledger, notepad, lore, Author's Note) into EVERY check
-        adjIncludeCard: false,    // feed the active character card's descriptive fields (description, personality, scenario) into EVERY check
+        adjIncludeMemory: true,   // feed the full memory stack (Summaryception, ledger, notepad, lore, Author's Note) into EVERY check
+        adjIncludeCard: true,     // feed the active character card's descriptive fields (description, personality, scenario) into EVERY check
         adjIncludeWorld: false,   // feed activated World Info / lorebook entries (constant + keyword-triggered) into EVERY check
         adjWorldBooks: '',        // OPTIONAL comma list pinning specific lorebooks; empty = the active book(s) from ST's dropdown
         adjFullChat: false,       // feed a large budgeted transcript instead of just the last ctxMsgs messages
@@ -489,7 +489,7 @@
         autoSeedEvery: 100,       // FALLBACK timer only; post-fight seeding is primary
         seedTranscriptK: 80,      // seed transcript window in thousands of chars (2026-scale default)
         seedMemoryK: 60,          // seed memory block in thousands of chars — ingest full Summaryception context
-        seedOutTokens: 4000,      // max tokens the seeder may emit (large casts fit comfortably)
+        seedOutTokens: 6000,      // max tokens the seeder may emit (headroom for very large casts)
         encounterTypes: '',       // comma list overriding built-in encounter hooks ('' = defaults)
         duelPoise: 5,             // default poise pool (sheet "poise" per actor overrides)
         tieBand: 0.06,            // exchange tie window (0 disables; ~even rolls become TRADE/STALEMATE)
@@ -2202,10 +2202,13 @@
         for (const key of Object.keys(actors)) {
             if (key.toLowerCase().trim() === target) return actors[key];
         }
-        // loose contains-match for "Kaiser" vs "Kaiser von Adler"
+        // Loose WHOLE-WORD match so "Kaiser" resolves to "Kaiser von Adler" —
+        // token-based, never a bare substring, so "Ana" never matches "Anakin"
+        // and a short name can't grab the wrong actor's rating.
+        const tt = target.split(/[\s,]+/).filter(Boolean);
         for (const key of Object.keys(actors)) {
-            const k = key.toLowerCase().trim();
-            if (k.includes(target) || target.includes(k)) return actors[key];
+            const kt = key.toLowerCase().trim().split(/[\s,]+/).filter(Boolean);
+            if (kt.some(w => w.length > 1 && tt.includes(w))) return actors[key];
         }
         return null;
     }

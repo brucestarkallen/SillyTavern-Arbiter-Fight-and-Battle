@@ -387,7 +387,26 @@ terrifying monster can unnerve you in the same fight. (Ambient, non-combatant
 crowds are still narrated rather than individually simulated — but anyone you
 actually fight has a real, breakable nerve.)
 
-## The opponent is never you — name-part guard (v0.26)
+## Performance-first defaults + whole-word actor matching (v0.27)
+
+The out-of-the-box defaults are tuned for accuracy over cost, so the referee is as
+smart as possible with no setup: it now reads your **full memory stack**
+(Summaryception, ledger, notepad, lore, Author's Note) **and your character card
+on every check**, uses a **full ten-message immediate window**, and gets a
+generous **12-second budget** so a rich-context check never gets cut off; the
+seeder gets more token headroom for very large casts. All of it stays plug-and-
+play — auto-seed, auto-duel/battle/war, and the ambient event engine are on, on
+the fair `realistic` curve. (If your referee model is slow and you'd rather trade
+some context for speed, turn off *Include memory* / *Include card* in the
+referee-context settings — everything still works, just leaner. World Info stays
+opt-in, since your memory already carries the established world.)
+
+Also hardened: roster lookups (`findActor`) now match on **whole words**, never
+bare substrings — so a short name still resolves to a full one ("Kaiser" →
+"Kaiser von Adler"), but a distinct character can never grab the wrong entry's
+rating ("Ana" is never mistaken for "Anakin"), in both fights and seeding.
+
+
 
 The referee identifies the fighters, and occasionally it split a player's full
 name and handed a *piece of it* back as the opponent — e.g. with the persona
