@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.26.1';
+    const VERSION = '0.26.2';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -767,7 +767,7 @@
         '- circumstance is PHYSICAL tactical advantage ONLY: position, momentum, surprise, preparation, exposure of the target, terrain, impairment, haste. Reward concrete tactics and exploited PHYSICAL weaknesses (+); penalize bad position, impairment, or haste (-). Use 0 when nothing notable applies.',
         '- NEVER penalize an action for being illegal, dishonorable, a foul, against duel etiquette, unsporting, or immoral, and never mention rules, sanctions, penalties, or disqualification. You do not know this world\'s rules; whether a move is "allowed" is the storyteller\'s to narrate, not yours to score. A dirty tactic that gives a real physical edge (a groin kick, sand in the eyes, a low blow) is a POSITIVE circumstance, not a negative one. Judge only what works, not what is permitted.',
         '- The opponent is WHOEVER the fiction says the player is fighting in <recent>/<action>. Use that name. If they are also on the sheet, use the sheet spelling; if not, still name them from the fiction and set opposition_kind "actor" (they will be rated as trained). NEVER substitute a different sheet name just because it is familiar — the scene\'s named opponent always wins over a sheet entry.',
-        '- The opponent is NEVER the player. Do NOT use the player\'s name, or ANY part of it (their given name OR their family name/surname), as the opponent (in "opposition" or "duel_start"). If the player is "' + (ctx().name1 || 'the player') + '" and the story calls them "' + (ctx().name1 || 'the player') + ' Wessex", then BOTH "' + (ctx().name1 || 'the player') + '" and "Wessex" are the player — the opponent is never either. Name the opponent by the opponent\'s OWN name as the scene uses it (their given name is fine); if you cannot find a name distinct from the player\'s, the action is probably a single check, not a duel.',
+        '- The opponent is NEVER the player. Do NOT use the player\'s name, or ANY part of it (their given name OR their family name/surname), as the opponent (in "opposition" or "duel_start"). The <player> block names the player; EVERY part of that name is the player. For example, if the player is "Alex Vance", then BOTH "Alex" and "Vance" are the player — the opponent is never either. Name the opponent by the opponent\'s OWN name as the scene uses it (their given name is fine); if you cannot find a name distinct from the player\'s, the action is probably a single check, not a duel.',
         '- opposition must be a PERSON or creature the player fights. Never use a place, academy, house, faction, or organization name as the opposition.',
     ].join('\n');
 
