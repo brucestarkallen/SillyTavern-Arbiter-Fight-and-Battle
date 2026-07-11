@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.28.0';
+    const VERSION = '0.29.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
 
@@ -41,8 +41,12 @@
         // Keep the indicator up for a minimum perceptible time so a fast
         // operation (or a fast failure) doesn't flash-and-vanish invisibly.
         const MIN_VISIBLE = 900;
-        const elapsed = activity.startedAt ? Date.now() - activity.startedAt : MIN_VISIBLE;
+        const token = activity.startedAt; // the activity THIS clear belongs to
+        const elapsed = token ? Date.now() - token : MIN_VISIBLE;
         const finish = () => {
+            // A newer activity may have started while this finish was pending —
+            // never clobber it (its ✕ cancel must stay live for its whole run).
+            if (activity.startedAt !== token) return;
             activity.label = '';
             activity.busy = false;
             activity.startedAt = 0;
@@ -99,10 +103,6 @@
         let h = 5381;
         for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
         return h.toString(16);
-    }
-
-    function sleep(ms) {
-        return new Promise(res => setTimeout(res, ms));
     }
 
     function escapeRegex(s) {
@@ -216,6 +216,10 @@
     const TIER_RATINGS = {
         trivial: 1, easy: 3, moderate: 5, hard: 7, extreme: 9,
         mook: 2, trained: 4, elite: 6, formidable: 8,
+        // The rating-guide vocabulary the prompts teach (2 untrained … 10 apex).
+        // Models emit these words as opposition tiers; unresolved they silently
+        // collapsed to a flat 5, flattening a "legendary" foe to average.
+        untrained: 2, competent: 5, veteran: 6, master: 8, legendary: 9, apex: 10,
         // relative tiers, resolved against the actor's own rating:
         inferior: 'A-2', peer: 'A', superior: 'A+2',
     };
@@ -428,7 +432,7 @@
         wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick,
         resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, buildDuelDirective, buildDirective,
         startBattle, resolveBattleRound, startWar, resolveWarRound, normalizeBattleAdj, normalizeWarAdj, normalizeAdj, startDuel,
-        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
+        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -455,7 +459,7 @@
         'rush', 'flank', 'pounce', 'blow', 'blew', 'sever', 'launch', 'sweep', 'swept', 'order', 'ordered',
         'command', 'commanded', 'direct', 'directed', 'rally', 'rallied', 'lead', 'led', 'overwhelm',
         'surround', 'ambush', 'raid', 'storm', 'siege', 'besiege', 'assault', 'engage', 'mow', 'scatter',
-        'cripple', 'maim', 'wound', 'curse', 'hex', 'poison', 'blind', 'break', 'shatter', 'mend', 'heal', 'cleanse', 'cure',
+        'cripple', 'maim', 'wound', 'curse', 'hex', 'poison', 'blind', 'mend', 'heal', 'cleanse', 'cure',
     ].join(', ');
 
     const DEFAULTS = {
@@ -621,11 +625,22 @@
     /** True if the seeder/adjudicator has some route it can call: either a
      *  chosen Connection Manager profile, or a usable raw generate fallback
      *  on a currently-connected main API. */
+    /** A stored profileId whose profile still exists in Connection Manager.
+     *  A DELETED profile's id lingers in settings; treating it as a live route
+     *  silently killed every check (the profile branch captured the call and
+     *  returned empty, never falling through to a working raw API). An empty
+     *  profiles list means "can't verify" and trusts the id. */
+    function liveProfileId(pid) {
+        if (!pid) return '';
+        const list = getProfiles();
+        return (list.length === 0 || list.some(p => p && p.id === pid)) ? pid : '';
+    }
+
     function hasWorkingRoute() {
         try {
             const c = ctx();
             const s = getSettings();
-            if (s.profileId && c.ConnectionManagerRequestService?.sendRequest) return true;
+            if (liveProfileId(s.profileId) && c.ConnectionManagerRequestService?.sendRequest) return true;
             // Raw fallback: only counts if a main API looks connected.
             if (typeof c.generateRaw === 'function') {
                 const online = c.onlineStatus;
@@ -651,22 +666,38 @@
 
         const extract = (res) => {
             if (typeof res === 'string') return res.trim();
-            if (res && typeof res === 'object') return String(res.content ?? res.text ?? '').trim();
+            if (res && typeof res === 'object') {
+                let v = res.content ?? res.text ?? '';
+                // Chat-completion shapes can hand content back as an array of
+                // parts; String() on that yields "[object Object]" garbage.
+                if (Array.isArray(v)) v = v.map(p => typeof p === 'string' ? p : String((p && (p.text ?? p.content)) ?? '')).join('');
+                return String(v).trim();
+            }
             return '';
         };
 
+        // Race a promise against the time budget WITHOUT leaking the budget
+        // timer: a fast response used to leave a 45-60s setTimeout pending per
+        // call — dozens of stale timers churning on a phone during heavy play.
+        const raceBudget = async (p, ms) => {
+            let t = null;
+            const timeout = new Promise(res => { t = setTimeout(() => res(null), ms); });
+            try { return await Promise.race([p, timeout]); }
+            finally { if (t) clearTimeout(t); }
+        };
+
         try {
-            const pid = profileOverride || s.profileId;
+            const pid = liveProfileId(profileOverride || s.profileId);
+            if ((profileOverride || s.profileId) && !pid) dlog('adjudicator profile no longer exists; using raw fallback');
             const svc = c.ConnectionManagerRequestService;
             if (pid && svc && typeof svc.sendRequest === 'function') {
                 const messages = [
                     { role: 'system', content: systemText },
                     { role: 'user', content: userText },
                 ];
-                const res = await Promise.race([
+                const res = await raceBudget(
                     svc.sendRequest(pid, messages, maxTokens, { signal: controller.signal, extractData: true }),
-                    sleep(budgetMs + 250).then(() => null),
-                ]);
+                    budgetMs + 250);
                 const out = extract(res);
                 if (out) return out;
                 dlog('profile call returned empty after', Date.now() - started, 'ms');
@@ -677,7 +708,7 @@
             // thinking model — the timeout still protects the turn).
             if (typeof c.generateRaw === 'function') {
                 const attempt = async (fn) => {
-                    const res = await Promise.race([fn(), sleep(budgetMs).then(() => null)]);
+                    const res = await raceBudget(fn(), budgetMs);
                     return extract(res);
                 };
                 let out = '';
@@ -730,7 +761,7 @@
             }
             if (end === -1) break;
             try { out.push(JSON.parse(cleaned.slice(start, end + 1))); } catch (e) { /* skip */ }
-            i = (end === -1 ? start : end) + 1;
+            i = end + 1;
         }
         return out;
     }
@@ -1024,20 +1055,37 @@
         return !!(meta && meta.battle && meta.battle.active && !meta.battle.over);
     }
 
-    /** Expand roster names ("Bandit x3") into unit objects with sheet lookups. */
-    function buildUnits(meta, names, domain, isEnemySide) {
+    /** Expand roster names ("Bandit x3") into unit objects with sheet lookups.
+     *  oppEstimate: the referee's scene-derived threat rating for the headline
+     *  foe (the first UNLISTED enemy name) — the same estimate a duel start
+     *  gets. Without it a legendary dragon opening a BATTLE (with minions) was
+     *  silently rated trained (4) while the identical dragon in a duel got its
+     *  9. Applies only to units expanded from that one base name; other
+     *  unlisted foes keep the trained fallback. */
+    function buildUnits(meta, names, domain, isEnemySide, oppEstimate) {
         const s = getSettings();
         const fallback = clamp(s.defaultRating, 0, 10);
         const units = [];
+        let estimateFor = null; // base name the estimate is bound to, once chosen
         for (const raw of names) {
             const m = raw.match(/^(.*?)(?:\s*[x×]\s*(\d{1,2}))\s*$/i);
             const base = (m ? m[1] : raw).trim();
             const count = m ? clamp(parseInt(m[2], 10), 1, 8) : 1;
             for (let i = 1; i <= count && units.length < 10; i++) {
                 const name = count > 1 ? base + ' ' + i : base;
-                const entry = findActor(meta, base) || findActor(meta, name);
-                const rating = entry ? ratingFor(entry, domain, fallback)
-                    : (isEnemySide ? clamp(TIER_RATINGS.trained, 0, 10) : fallback);
+                // Generic xN squads use EXACT sheet lookup only: the loose
+                // whole-word matcher exists so "Kaiser" finds "Kaiser von Adler",
+                // but it also let a mook squad "Guard x3" inherit a named
+                // "Guard Captain"'s elite rating — common-noun collision. A
+                // squad the fiction spawned by count is never a named character.
+                const entry = count > 1 ? findActorExact(meta, base)
+                    : (findActor(meta, base) || findActor(meta, name));
+                let rating;
+                if (entry) rating = ratingFor(entry, domain, fallback);
+                else if (isEnemySide && Number.isFinite(oppEstimate) && (estimateFor === null || estimateFor === base)) {
+                    estimateFor = base;
+                    rating = clamp(oppEstimate, 0, 10);
+                } else rating = isEnemySide ? clamp(TIER_RATINGS.trained, 0, 10) : fallback;
                 const poise = poiseFor(entry, s.duelPoise);
                 const cMax = clamp(s.composureMax, 3, 12);
                 units.push({ name, rating, poise, maxPoise: poise, injuries: 0, momentum: 0, opening: false, standing: true, isPlayer: false, composure: cMax, composureMax: cMax });
@@ -1058,7 +1106,7 @@
         return nt.every(t => pt.includes(t)) || pt.every(t => nt.includes(t));
     }
 
-    function startBattle(meta, allyNames, enemyNames, domain, scaleMismatch) {
+    function startBattle(meta, allyNames, enemyNames, domain, scaleMismatch, oppEstimate) {
         const s = getSettings();
         const d = String(domain || 'melee').toLowerCase();
         const playerName = ctx().name1 || 'Player';
@@ -1070,7 +1118,7 @@
             injuries: 0, momentum: 0, opening: false, standing: true, isPlayer: true,
         };
         const allies = buildUnits(meta, (allyNames || []).filter(n => !isPlayerName(n, playerName)), d, false);
-        const enemies = buildUnits(meta, enemyNames || [], d, true);
+        const enemies = buildUnits(meta, enemyNames || [], d, true, oppEstimate);
         if (!enemies.length) return null;
         meta.battle = {
             active: true, over: false, victor: null, mcDown: false, round: 0, domain: d,
@@ -1310,7 +1358,9 @@
                 const count = m2 ? clamp(parseInt(m2[2], 10), 1, 6) : 1;
                 for (let i = 1; i <= count && units.length < 8; i++) {
                     const name = count > 1 ? base + ' ' + i : base;
-                    const entry = findActor(meta, base) || findActor(meta, name);
+                    // xN-cloned formations: exact sheet match only (see buildUnits).
+                    const entry = count > 1 ? findActorExact(meta, base)
+                        : (findActor(meta, base) || findActor(meta, name));
                     const rating = entry ? ratingFor(entry, 'war', ratingFor(entry, 'melee', fallback)) : (isEnemy ? 4 : fallback);
                     const strength = poiseFor(entry, clamp(s.warStrength, 4, 40));
                     const cMax = clamp(s.composureMax, 3, 12);
@@ -1587,8 +1637,21 @@
      *  snippets/recall, Continuity Copilot's character ledger, notepads,
      *  lore/plot keys, and the Author's Note. Returns block + source list. */
     function collectMemoryBlock(limitChars) {
+        const cap = limitChars || 5000;
         const sources = [];
         const chunks = [];
+        let used = 0;
+        // Accumulate UP TO the cap instead of joining every injection into one
+        // megastring and slicing after — Summaryception-scale contexts made that
+        // a transient multi-hundred-KB allocation per check (GC churn on
+        // Android). Sources still itemize FULL sizes for the inspector.
+        const take = (text) => {
+            if (used >= cap) return;
+            const room = cap - used;
+            const piece = text.length > room ? text.slice(0, room) : text;
+            chunks.push(piece);
+            used += piece.length + 5; // + separator
+        };
         try {
             const c = ctx();
             const eps = c.extensionPrompts || c.extension_prompts || {};
@@ -1596,17 +1659,19 @@
             for (const [k, v] of Object.entries(eps)) {
                 const val = v && typeof v === 'object' ? v.value : v;
                 if (memRe.test(k) && typeof val === 'string' && val.trim()) {
-                    chunks.push(val.trim());
-                    sources.push({ key: k, chars: val.trim().length });
+                    const t = val.trim();
+                    sources.push({ key: k, chars: t.length });
+                    take(t);
                 }
             }
             const md = c.chatMetadata || c.chat_metadata || {};
             if (typeof md.note_prompt === 'string' && md.note_prompt.trim()) {
-                chunks.push(md.note_prompt.trim());
-                sources.push({ key: "author's note", chars: md.note_prompt.trim().length });
+                const t = md.note_prompt.trim();
+                sources.push({ key: "author's note", chars: t.length });
+                take(t);
             }
         } catch (e) { dlog('memory gather failed', e); }
-        const block = chunks.length ? '<memory>\n' + chunks.join('\n---\n').slice(0, limitChars || 5000) + '\n</memory>' : '';
+        const block = chunks.length ? '<memory>\n' + chunks.join('\n---\n') + '\n</memory>' : '';
         return { block, sources };
     }
 
@@ -1817,8 +1882,14 @@
         }
         const mem = collectMemoryBlock(clamp(ts.seedMemoryK, 2, 500) * 1000);
         const existing = meta.threads.map(t => t.name).join(', ') || 'none';
-        const out = await callLLM(THREAD_SEED_SYSTEM, (mem.block ? mem.block + '\n\n' : '') + '<existing_threads>' + existing + '</existing_threads>\n\n<transcript>\n' + parts.reverse().join('\n') + '\n</transcript>', 700, 45000, ts.seedProfileId || undefined);
+        // 1200 out-tokens: a full pool (5 threads + 6 encounters + 4 world events,
+        // each up to 220 chars) can exceed the old 700 and truncate into
+        // unparseable JSON — a silent total seeding failure. Terse outputs still
+        // stop early, so the raise costs nothing when the model is brief.
+        const seedEpoch = chatEpoch;
+        const out = await callLLM(THREAD_SEED_SYSTEM, (mem.block ? mem.block + '\n\n' : '') + '<existing_threads>' + existing + '</existing_threads>\n\n<transcript>\n' + parts.reverse().join('\n') + '\n</transcript>', 1200, 45000, ts.seedProfileId || undefined);
         clearActivity();
+        if (seedEpoch !== chatEpoch) { dlog('chat changed during thread seed; result discarded'); return; }
         if (activityCanceled()) { if (!o.auto) toast('warning', 'Thread seed canceled.'); return; }
         let obj = null;
         for (const cand of extractJsonCandidates(out, 5)) {
@@ -1897,14 +1968,20 @@
                 ? { strike: String(x.strike || x.step).slice(0, 60), circumstance: clamp(Math.round(Number(x.circumstance) || 0), -3, 3) }
                 : null).filter(Boolean).slice(0, 5)
             : null;
+        const moveKind = obj.move_kind === 'recover' ? 'recover' : 'attack';
         return {
             exchange: true,
-            moveKind: obj.move_kind === 'recover' ? 'recover' : 'attack',
+            moveKind,
             oppComposure: clamp(Math.round(Number(obj.opp_composure) || 0), -2, 2),
             selfComposure: clamp(Math.round(Number(obj.self_composure) || 0), -2, 2),
             action: String(obj.action || 'the exchange').slice(0, 140),
             circumstance: clamp(Math.round(Number(obj.circumstance) || 0), -3, 3),
-            sequence: (rawSeq && rawSeq.length >= 2) ? rawSeq : null,
+            // Sequences are OFFENSIVE combos by definition. A model that emits
+            // both move_kind:"recover" and a sequence must resolve as a recovery
+            // — routing it into the combo resolver would make the heal DEAL poise
+            // damage to the opponent on a good roll (the fast-mode heal-attack
+            // bug, reborn through the adjudicated path).
+            sequence: (moveKind === 'attack' && rawSeq && rawSeq.length >= 2) ? rawSeq : null,
             why: String(obj.why || '').slice(0, 160),
         };
     }
@@ -2206,20 +2283,62 @@
         ].join('\n');
     }
 
+    /** Sheet key for a name, or null. Exact (case-insensitive) first, then a
+     *  loose WHOLE-WORD match so "Kaiser" resolves to "Kaiser von Adler" —
+     *  token-based, never a bare substring, so "Ana" never matches "Anakin"
+     *  and a short name can't grab the wrong actor's rating. */
+    function findActorKey(meta, name) {
+        const actors = meta.sheet?.actors || {};
+        const target = String(name || '').toLowerCase().trim();
+        if (!target) return null;
+        for (const key of Object.keys(actors)) {
+            if (key.toLowerCase().trim() === target) return key;
+        }
+        const tt = target.split(/[\s,]+/).filter(Boolean);
+        for (const key of Object.keys(actors)) {
+            const kt = key.toLowerCase().trim().split(/[\s,]+/).filter(Boolean);
+            if (kt.some(w => w.length > 1 && tt.includes(w))) return key;
+        }
+        return null;
+    }
+
     function findActor(meta, name) {
+        const key = findActorKey(meta, name);
+        return key === null ? null : (meta.sheet?.actors || {})[key];
+    }
+
+    /** Exact-match-only lookup (case-insensitive) — for generic xN squads,
+     *  where the loose token matcher must never hand a mook a named
+     *  character's rating ("Guard x3" ← "Guard Captain"). */
+    function findActorExact(meta, name) {
         const actors = meta.sheet?.actors || {};
         const target = String(name || '').toLowerCase().trim();
         if (!target) return null;
         for (const key of Object.keys(actors)) {
             if (key.toLowerCase().trim() === target) return actors[key];
         }
-        // Loose WHOLE-WORD match so "Kaiser" resolves to "Kaiser von Adler" —
-        // token-based, never a bare substring, so "Ana" never matches "Anakin"
-        // and a short name can't grab the wrong actor's rating.
-        const tt = target.split(/[\s,]+/).filter(Boolean);
+        return null;
+    }
+
+    /** Seeding-grade IDENTITY match: an existing sheet key counts as the same
+     *  person only when one name's tokens are a subset of the other's
+     *  ("Kaiser" ↔ "Kaiser von Adler"). A mere shared surname is NOT identity —
+     *  siblings ("Claire Wessex" vs a seeded "Marcus Wessex") must never be
+     *  merged into one entry or delete each other, which the loose any-shared-
+     *  token matcher would allow. Returns the sheet key, or null. */
+    function findActorKeySamePerson(meta, name) {
+        const actors = meta.sheet?.actors || {};
+        const nrm = (x) => String(x || '').toLowerCase().trim();
+        const toks = (x) => nrm(x).split(/[\s,]+/).filter(Boolean);
+        const target = nrm(name);
+        if (!target) return null;
+        for (const key of Object.keys(actors)) if (nrm(key) === target) return key;
+        const tt = toks(name);
+        if (!tt.length) return null;
         for (const key of Object.keys(actors)) {
-            const kt = key.toLowerCase().trim().split(/[\s,]+/).filter(Boolean);
-            if (kt.some(w => w.length > 1 && tt.includes(w))) return actors[key];
+            const kt = toks(key);
+            if (!kt.length) continue;
+            if (kt.every(w => tt.includes(w)) || tt.every(w => kt.includes(w))) return key;
         }
         return null;
     }
@@ -2487,13 +2606,26 @@
     /* The interceptor                                                     */
     /* ------------------------------------------------------------------ */
 
-    let inFlight = false;
+    // Chat identity epoch. Bumped on CHAT_CHANGED so any async work that began
+    // in another chat (an adjudication awaiting its LLM, a 60s background seed)
+    // can detect the switch and DISCARD itself instead of injecting a stale
+    // directive into the new chat or writing to a detached metadata object.
+    let chatEpoch = 0;
+
+    // In-flight latch, epoch-scoped: a stale run from ANOTHER chat must never
+    // block the current chat's first check (the old boolean latch did).
+    let inFlightEpoch = null;
     // Last referee call, captured verbatim for the inspector (ephemeral, per session).
     let LAST_ADJ = null;
 
     async function interceptorBody(chat, contextSize, abort, type) {
         const s = getSettings();
         if (!s.enabled) return;
+        // Everything below (meta, injections, cache commits) belongs to THIS
+        // chat. If the user switches chats while we await the referee, this
+        // run is stale: it must not inject, commit, or mutate anything.
+        const epoch = chatEpoch;
+        const stale = () => epoch !== chatEpoch;
 
         const genType = type || 'normal';
         const eligible = ['normal', 'swipe', 'regenerate', 'continue'];
@@ -2573,6 +2705,10 @@
                 if (snap.tc !== undefined) meta.tickCount = snap.tc;
                 if (snap.es !== undefined) meta.encounterSeeds = snap.es ? snap.es.slice() : undefined;
                 if (snap.ws !== undefined) meta.worldSeeds = snap.ws ? snap.ws.slice() : undefined;
+                if (snap.c !== undefined) {
+                    if (snap.c === null) delete meta.composure;
+                    else meta.composure = snap.c;
+                }
             } else {
                 meta.duel = copy(snap); // legacy v0.2 snapshot: duel-or-null
             }
@@ -2603,6 +2739,10 @@
             tc: meta.tickCount || 0,
             es: Array.isArray(meta.encounterSeeds) ? meta.encounterSeeds.slice() : null,
             ws: Array.isArray(meta.worldSeeds) ? meta.worldSeeds.slice() : null,
+            // Player composure lives on meta, OUTSIDE duel/battle objects — without
+            // this an edited re-send double-applies the turn's mental toll (a -3
+            // horror beat re-rolled lands as -6): composure drift on every re-roll.
+            c: (typeof meta.composure === 'number') ? meta.composure : null,
         };
 
         // Background world: replay on the same message, tick on new ones.
@@ -2640,8 +2780,8 @@
             return;
         }
 
-        if (inFlight) { dlog('adjudication already in flight; skipping'); return; }
-        inFlight = true;
+        if (inFlightEpoch === chatEpoch) { dlog('adjudication already in flight; skipping'); return; }
+        inFlightEpoch = chatEpoch;
         const t0 = Date.now();
         try {
             const budget = clamp(s.timeoutMs, 1500, 60000);
@@ -2706,6 +2846,7 @@
             if (s.adjIncludeWorld) {
                 const scanText = compactRecent(chat, 12, null, !!s.adjIncludeHidden) + '\n' + String(lastUser.mes || '');
                 const wi = await collectWorldInfoBlock(scanText, clamp(s.adjContextK, 4, 500) * 1000);
+                if (stale()) { dlog('chat changed during WI activation; check discarded'); return; }
                 if (wi) userPrompt = userPrompt.includes('<recent>') ? userPrompt.replace('<recent>', wi + '\n\n<recent>') : (userPrompt + '\n\n' + wi);
             }
             // Capture verbatim for the inspector so the user can read exactly what
@@ -2714,7 +2855,12 @@
                 rich: { memory: !!s.adjIncludeMemory, card: !!s.adjIncludeCard, world: !!s.adjIncludeWorld, fullChat: !!s.adjFullChat, hidden: !!s.adjIncludeHidden, ctxK: s.adjContextK, ctxMsgs: s.ctxMsgs },
                 system: sysPrompt, user: userPrompt, chars: sysPrompt.length + userPrompt.length };
 
-            let rawOut = await callLLM(sysPrompt, userPrompt, 260, budget);
+            // 600 tokens, not a tight 260: a terse model stops early anyway (no
+            // latency cost), while a thinking model that reasons before the JSON,
+            // or a full 5-strike sequence payload, no longer truncates into an
+            // unparseable object and silently kills the check.
+            let rawOut = await callLLM(sysPrompt, userPrompt, 600, budget);
+            if (stale()) { dlog('chat changed mid-adjudication; stale check discarded'); return; }
             const normalize = (r) => {
                 for (const cand of extractJsonCandidates(r, 5)) {
                     const n = inDuel ? normalizeDuelAdj(cand) : (inWar ? normalizeWarAdj(cand) : (inBattle ? normalizeBattleAdj(cand) : normalizeAdj(cand)));
@@ -2729,7 +2875,8 @@
                 dlog('invalid JSON, retrying once');
                 rawOut = await callLLM(
                     sysPrompt + '\n\nYour previous output was invalid. Output ONLY the JSON object.',
-                    userPrompt, 260, budget - (Date.now() - t0));
+                    userPrompt, 600, budget - (Date.now() - t0));
+                if (stale()) { dlog('chat changed mid-retry; stale check discarded'); return; }
                 adj = normalize(rawOut);
             }
 
@@ -2869,7 +3016,7 @@
             // Auto battle start: group combat begins — this attempt resolves
             // as round 1 of a fresh battle.
             if (adj.battle_start && s.autoBattle) {
-                const started = startBattle(meta, adj.battle_start.allies, adj.battle_start.enemies, adj.domain, adj.scale_mismatch);
+                const started = startBattle(meta, adj.battle_start.allies, adj.battle_start.enemies, adj.domain, adj.scale_mismatch, adj.opponent_rating);
                 if (started) {
                     const out = resolveBattleRound(meta, { kind: 'fight', target: null, action: adj.action, circumstance: adj.circumstance });
                     const directive = buildBattleDirective(meta, adj, out);
@@ -2949,7 +3096,9 @@
             }
             renderLog();
         } finally {
-            inFlight = false;
+            // Release only OUR latch: if the chat changed and a new run took the
+            // latch for the new epoch, this stale finally must not clobber it.
+            if (inFlightEpoch === epoch) inFlightEpoch = null;
             clearActivity();
         }
     }
@@ -2960,7 +3109,7 @@
             await interceptorBody(chat, contextSize, abort, type);
         } catch (e) {
             warn('interceptor error (generation proceeds):', e);
-            inFlight = false;
+            inFlightEpoch = null;
         }
     };
 
@@ -3024,8 +3173,10 @@
         const userPrompt = '<existing_sheet>\n' + existing + '\n</existing_sheet>\n\n' + voices + rosterBlock + (mem.block ? mem.block + '\n\n' : '') + '<transcript>\n' +
             parts.reverse().join('\n') + '\n</transcript>';
 
+        const seedEpoch = chatEpoch;
         const out = await callLLM(SEED_SYSTEM, userPrompt, clamp(s.seedOutTokens, 400, 8000), 60000, s.seedProfileId || undefined);
         clearActivity();
+        if (seedEpoch !== chatEpoch) { dlog('chat changed during sheet seed; result discarded'); return; }
         if (activityCanceled()) { if (!o.auto) toast('warning', 'Seed canceled.'); return; }
         let obj = null;
         for (const cand of extractJsonCandidates(out, 5)) {
@@ -3040,7 +3191,11 @@
         for (const [name, entry] of Object.entries(obj.actors)) {
             if (!name.trim() || !entry || typeof entry !== 'object') continue;
             const key = name.trim();
-            const existing = findActor(meta, key);
+            // IDENTITY match, not the loose duel-time matcher: a seeded sibling
+            // ("Marcus Wessex") must never merge into or replace "Claire Wessex"
+            // just because they share a surname.
+            const existingKey = findActorKeySamePerson(meta, key);
+            const existing = existingKey ? meta.sheet.actors[existingKey] : null;
             const clean = { default: clamp(entry.default ?? 5, 0, 10), domains: {}, _auto: true };
             for (const [d, v] of Object.entries(entry.domains || {})) {
                 const dk = String(d).toLowerCase().trim();
@@ -3068,6 +3223,11 @@
                 continue;
             }
             // A fresh considered rating replaces a prior estimated baseline (or is new).
+            // If the same person lived under an ALIAS key (seeder says "Kaiser von
+            // Adler", sheet holds an estimated "Kaiser"), drop the old key —
+            // otherwise both remain and the loose matcher's key order decides
+            // which rating wins from then on.
+            if (existingKey && existingKey !== key) delete meta.sheet.actors[existingKey];
             meta.sheet.actors[key] = clean;
             added++;
         }
@@ -3111,7 +3271,13 @@
             saveMeta();
             const reason = firstRun ? '(first run)' : postFight ? '(post-fight)' : '(timer fallback)';
             dlog('auto-seed pass at turn', tc, reason);
+            const passEpoch = chatEpoch;
             await seedSheet({ auto: true, firstRun });
+            // The user's ✕ cancels the PASS, not just the current call — don't
+            // immediately open a second 45s call they just tried to stop. A chat
+            // switch mid-pass likewise ends it (the thread seed would target the
+            // wrong chat's meta).
+            if (passEpoch !== chatEpoch || activityCanceled()) return;
             if (s.eventEngine) await seedThreads({ auto: true });
         } catch (e) {
             dlog('auto-seed failed', e);
@@ -3984,6 +4150,7 @@
         if (et.GENERATION_ENDED) es.on(et.GENERATION_ENDED, () => { clearInjection(); maybeAutoSeed(); });
         if (et.GENERATION_STOPPED) es.on(et.GENERATION_STOPPED, () => clearInjection());
         if (et.CHAT_CHANGED) es.on(et.CHAT_CHANGED, () => {
+            chatEpoch++; // any in-flight check/seed from the previous chat is now stale
             clearInjection();
             renderSheet();
             renderLog();
@@ -4002,7 +4169,7 @@
             initEvents();
             clearInjection();
             renderHud();
-            console.log(LOG, 'v0.1 ready');
+            console.log(LOG, 'v' + VERSION + ' ready');
         } catch (e) {
             console.error(LOG, 'init failed', e);
         }

@@ -43,7 +43,7 @@ let fails = 0; const ok = (n, c) => { console.log(n + ':', c ? 'OK' : 'FAIL'); i
   // 3. Source-level guarantee: the seed-profile override chain is present.
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.js'),'utf8');
   ok('callLLM accepts a profile override', /async function callLLM\([^)]*profileOverride\)/.test(src));
-  ok('callLLM uses the override before the default', src.includes('const pid = profileOverride || s.profileId;'));
+  ok('callLLM uses the override before the default', src.includes("liveProfileId(profileOverride || s.profileId)"));
   ok('seedSheet passes the seed profile', src.includes('s.seedProfileId || undefined'));
 
   // 4. Fallback timer default raised to 100 (post-fight is primary).
