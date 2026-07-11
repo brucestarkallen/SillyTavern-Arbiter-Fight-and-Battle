@@ -22,9 +22,23 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.29.0';
+    const VERSION = '0.30.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
+    // Committed-turn history depth: how many resolved player turns keep a
+    // rewindable world snapshot (deleting/branching past this falls back to
+    // the oldest retained snapshot).
+    const HISTORY_CAP = 12;
+
+    /** Deep copy for snapshot state. structuredClone where available (faster,
+     *  far less garbage than JSON round-trips — this runs every turn). */
+    function deepCopy(o) {
+        if (o === null || o === undefined) return null;
+        try {
+            if (typeof structuredClone === 'function') return structuredClone(o);
+        } catch (e) { /* fall through */ }
+        return JSON.parse(JSON.stringify(o));
+    }
 
     // Live activity state, surfaced as a floating indicator with a cancel.
     const activity = { label: '', busy: false, canceled: false, startedAt: 0 };
@@ -432,7 +446,7 @@
         wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick,
         resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, buildDuelDirective, buildDirective,
         startBattle, resolveBattleRound, startWar, resolveWarRound, normalizeBattleAdj, normalizeWarAdj, normalizeAdj, startDuel,
-        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
+        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, applyConditionChange, liveCombatant, refreshLiveRating, restoreSnapshot, deepCopy, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -775,6 +789,10 @@
     /* Adjudication                                                        */
     /* ------------------------------------------------------------------ */
 
+    // Shared across ALL referee schemas (single checks AND fight rounds) so
+    // the four prompts can never drift apart on this field's semantics.
+    const COND_CHANGE_FIELD = '"condition_change": null | {"who": "<player or a named character>", "add": "<short lasting condition or piece of gear just established, e.g. broken left arm, poisoned, exhausted, OR a signature weapon/armor like masterwork blade, enchanted plate — or null>", "remove": "<a prior condition/gear the fiction just resolved (healed, lost, broken), or null>", "mod": <integer -4..3, effect while it lasts; afflictions negative (broken arm -2), good gear positive (fine sword +1, legendary weapon +2 or +3)>, "domain": "<optional: the ONE domain this affects, e.g. melee for a sword, ranged for a bow; omit for whole-body effects like a curse or exhaustion>", "gear": true|false}. Set the moment the story establishes/removes something PERSISTENT (lasts beyond this scene). Gear (weapons, armor, tools) sets gear:true so it is not stripped by healing. Leave null when nothing persistent changed.';
+
     const ADJ_SYSTEM = [
         'You are Arbiter, an outcome adjudicator for a roleplay. Decide whether the player\'s latest action needs a resolution check, and if so, classify it. You NEVER decide success or failure — only the parameters. Output STRICT JSON only: one object, no markdown, no commentary.',
         '',
@@ -792,7 +810,7 @@
         ' "opponent_rating": null | <integer 0-10 — set ONLY when you also set duel_start or battle_start AND the opponent is NOT already in the sheet. Estimate combat capability from the scene and description. Scale (by effective threat, NOT species): 2 untrained, 4 trained, 5 competent professional, 6 veteran, 7 elite, 8 master, 9 legendary, 10 apex. This applies to ANY combatant — a person, beast, dragon, alien, machine, or monster — rated by how dangerous it actually is: a feral dog 3, a trained warhound 5, a dire beast 7, an ancient dragon or apex monster 9-10. When a creature is so far beyond human scale that raw skill barely matters, rate it 10 AND set scale_mismatch below.>",',
         ' "scale_mismatch": null | <integer -4..4 — set ONLY in combat where the two sides are CATEGORICALLY mismatched in size, mass, or power (a human vs a dragon, a footsoldier vs a war-mech, a child vs a bear). This is an ADDITIONAL swing on top of ratings, representing that skill alone cannot close the gap. From the PLAYER\'s perspective: strongly negative when the player is hopelessly outmatched by something vast (a normal human attacking a dragon head-on: -3 or -4), strongly positive when the player is the vast one crushing something tiny. 0 or null when both sides are roughly the same scale (human vs human, dragon vs dragon), even if their skill differs. An equalizer in the fiction — a dragon-slaying spear, a mech of their own, a weak point exposed — reduces the magnitude.>",',
         ' "composure_change": null | <integer -3..3 — the mental toll or relief of THIS moment on the player. Negative when the player faces horror, terror, gruesome death, existential dread, betrayal, or crushing loss (a mild shock -1, witnessing atrocity -2, mind-shattering cosmic horror -3). Positive when the player finds safety, rest, reassurance, or a grounding victory (+1 to +2). 0 for ordinary moments. This is the FICTION\'s emotional weight, independent of any dice outcome. Judge from what happens to the player, not whether an action succeeds.>",',
-        ' "condition_change": null | {"who": "<player or a named character>", "add": "<short lasting condition or piece of gear just established, e.g. broken left arm, poisoned, exhausted, OR a signature weapon/armor like masterwork blade, enchanted plate — or null>", "remove": "<a prior condition/gear the fiction just resolved (healed, lost, broken), or null>", "mod": <integer -4..3, effect while it lasts; afflictions negative (broken arm -2), good gear positive (fine sword +1, legendary weapon +2 or +3)>, "domain": "<optional: the ONE domain this affects, e.g. melee for a sword, ranged for a bow; omit for whole-body effects like a curse or exhaustion>", "gear": true|false}. Set the moment the story establishes/removes something PERSISTENT (lasts beyond this scene). Gear (weapons, armor, tools) sets gear:true so it is not stripped by healing. Leave null when nothing persistent changed.',
+        ' ' + COND_CHANGE_FIELD,
         ' "battle_start": null | {"allies": ["<name>", ...], "enemies": ["<name or generic squad like Guard x3>", ...]} — set this when combat begins against MULTIPLE opponents at once, OR when the player attacks/affects a GROUP (e.g. "sweep through the guards", "hit all of them"). If the opponents are unnamed, invent a fitting generic squad with a count (e.g. "Guard x3", "Bandit x4"). List allies EXCLUDING the player. This is for skirmish-scale group combat (a handful per side), NOT army-scale warfare.},',
         ' "war_start": null | {"allies": ["<formation, e.g. Left Flank, 3rd Cavalry, Zero Squadron>", ...], "enemies": ["<enemy formation>", ...], "enemy_commander": "<name or null>"} — set when the player takes COMMAND of army-scale combat: leading forces, issuing orders to units/formations/squadrons. Invent sensible formation names from the fiction if unnamed (2-5 per side).,',
         ' "army_scale": null | "<short name for the larger conflict — set ONLY when the player is caught in mass warfare WITHOUT commanding it (a soldier or bystander in the melee); if they command, use war_start instead>"}',
@@ -953,6 +971,39 @@
         return { who, add, remove, mod, domain, gear };
     }
 
+    /** The live fight combatant object for a name, if a duel/battle is active. */
+    function liveCombatant(meta, name) {
+        const nrm = (x) => String(x || '').toLowerCase().trim();
+        const t = nrm(name);
+        if (!t) return null;
+        const match = (u) => u && nrm(u.name) === t;
+        if (meta.duel) {
+            if (match(meta.duel.player)) return meta.duel.player;
+            if (match(meta.duel.opp)) return meta.duel.opp;
+        }
+        if (meta.battle) {
+            for (const u of (meta.battle.allies || [])) if (match(u)) return u;
+            for (const u of (meta.battle.enemies || [])) if (match(u)) return u;
+        }
+        return null;
+    }
+
+    /** A persistent condition must land on the LIVE fight too, not only on
+     *  future ones: refresh the affected combatant's effective rating in
+     *  place from the (just-updated) sheet. */
+    function refreshLiveRating(meta, who) {
+        const playerName = ctx().name1 || 'Player';
+        const name = /^(you|player|me|myself)$/i.test(String(who || '')) ? playerName : who;
+        const u = liveCombatant(meta, name);
+        if (!u) return;
+        const entry = findActor(meta, name);
+        if (!entry) return;
+        const domain = (meta.duel && (u === meta.duel.player || u === meta.duel.opp)) ? meta.duel.domain
+            : (meta.battle ? meta.battle.domain : 'melee');
+        u.rating = ratingFor(entry, domain, clamp(getSettings().defaultRating, 0, 10));
+        renderHud();
+    }
+
     /** Apply a persistent condition change to the sheet, resolving "player"
      *  to the persona. Creates the actor entry if needed so the condition
      *  sticks even for someone not yet rated. Returns a note for narration. */
@@ -962,7 +1013,17 @@
         const name = /^(you|player|me|myself)$/i.test(cc.who) ? playerName : cc.who;
         meta.sheet = meta.sheet || { actors: {} };
         let entry = findActor(meta, name);
-        if (!entry) { entry = { default: clamp(getSettings().defaultRating, 0, 10), domains: {}, _auto: true, conditions: [] }; meta.sheet.actors[name] = entry; }
+        if (!entry) {
+            // Seed a created entry from the LIVE combatant's rating when one
+            // exists: an estimated rating-9 dragon that picks up "torn wing"
+            // must not be reborn on the sheet as a default-5 — that entry
+            // would poison every future encounter with it.
+            let base = clamp(getSettings().defaultRating, 0, 10);
+            const live = liveCombatant(meta, name);
+            if (live && Number.isFinite(live.rating)) base = clamp(live.rating, 0, 10);
+            entry = { default: base, domains: {}, _auto: true, conditions: [] };
+            meta.sheet.actors[name] = entry;
+        }
         entry.conditions = Array.isArray(entry.conditions) ? entry.conditions : [];
         const notes = [];
         if (cc.remove) {
@@ -1025,9 +1086,11 @@
         ' "action": "<the move, 3-10 words>",',
         ' "circumstance": <integer -3..3>,',
         ' "why": "<one short clause>",',
+        ' ' + COND_CHANGE_FIELD,
         ' "combat_ended": true|false}',
         '',
         'Rules:',
+        '- condition_change: also available MID-BATTLE — set it when this round establishes or resolves something persistent on the player or a NAMED combatant. Null when nothing persistent changed.',
         '- move_kind "fight": the player personally engages one enemy (use "target"). move_kind "command": the player directs the whole side — orders, tactics, formation, rallying.',
         '- In an active duel nearly every player turn IS an exchange — the enemy presses regardless. Passive or hesitant turns are exchanges with NEGATIVE circumstance.',
         '- circumstance is PHYSICAL advantage only (position, momentum, feints that create real openings, exposure). NEVER penalize a move for being a foul, dirty, illegal, dishonorable, or against duel rules, and never mention sanctions or penalties — a dirty move that works (a low blow, a groin kick) is a POSITIVE circumstance. You judge what is effective, not what is permitted; the fiction owns the rules.',
@@ -1047,6 +1110,7 @@
             target: (typeof obj.target === 'string' && obj.target.trim()) ? obj.target.trim().slice(0, 60) : null,
             action: String(obj.action || 'the exchange').slice(0, 140),
             circumstance: clamp(Math.round(Number(obj.circumstance) || 0), -3, 3),
+            condition_change: normalizeConditionChange(obj.condition_change),
             why: String(obj.why || '').slice(0, 160),
         };
     }
@@ -1120,6 +1184,7 @@
         const allies = buildUnits(meta, (allyNames || []).filter(n => !isPlayerName(n, playerName)), d, false);
         const enemies = buildUnits(meta, enemyNames || [], d, true, oppEstimate);
         if (!enemies.length) return null;
+        meta.duel = null; // mode exclusivity — see startDuel
         meta.battle = {
             active: true, over: false, victor: null, mcDown: false, round: 0, domain: d,
             scaleMismatch: clamp(Math.round(Number(scaleMismatch) || 0), -4, 4),
@@ -1301,9 +1366,11 @@
         ' "action": "<the order, 3-12 words>",',
         ' "circumstance": <integer -3..3>,',
         ' "why": "<one short clause>",',
+        ' ' + COND_CHANGE_FIELD,
         ' "combat_ended": true|false}',
         '',
         'Rules:',
+        '- condition_change: also available MID-ENGAGEMENT — set it when this round establishes or resolves something persistent on the player commander or a NAMED character. Null when nothing persistent changed.',
         '- "maneuver": a formation is ordered against an enemy element (flank, charge, hold, envelop, pincer, screen, withdraw-and-counter). Fill acting_unit and target_unit from the roster.',
         '- "stratagem": the order reshapes the FIELD rather than one clash — burn the woods, feign retreat, poison the wells, cut supply, deception, weather/terrain exploitation. Leave units null.',
         '- "personal": the commander personally sorties into the fight (a duelist-commander, an ace in their machine). Fill target_unit.',
@@ -1326,6 +1393,7 @@
             target: pick(obj.target_unit),
             action: String(obj.action || 'the order').slice(0, 160),
             circumstance: clamp(Math.round(Number(obj.circumstance) || 0), -3, 3),
+            condition_change: normalizeConditionChange(obj.condition_change),
             why: String(obj.why || '').slice(0, 160),
         };
     }
@@ -1372,6 +1440,7 @@
         const allies = mkUnits((allyNames || []).filter(n => !isPlayerName(n, playerName)), false);
         const enemies = mkUnits(enemyNames || [], true);
         if (!enemies.length) return null;
+        meta.duel = null; // mode exclusivity — see startDuel
         meta.battle = {
             kind: 'war', active: true, over: false, victor: null, mcDown: false, round: 0, domain: d,
             cmdA, cmdE, enemyCommander: enemyCommander || null,
@@ -1944,9 +2013,11 @@
         ' "circumstance": <integer -3..3>,',
         ' "sequence": null | [{"strike": "<short label, 2-6 words>", "circumstance": <integer -3..3>}],',
         ' "why": "<one short clause>",',
+        ' ' + COND_CHANGE_FIELD,
         ' "combat_ended": true|false}',
         '',
         'Rules:',
+        '- condition_change: also available MID-FIGHT — set it when THIS exchange establishes or resolves something persistent on EITHER fighter (a lasting wound beyond the exchange, poison taking hold, a disarm, gear seized or broken). Null when nothing persistent changed.',
         '- move_kind "recover": the player DISENGAGES to restore themselves — healing magic on themselves, a water/life node, catching their breath, a defensive reset that regains composure, mending their own wounds. This regains poise but yields tempo (the opponent acts freely). Everything else is "attack" (including defensive counters that still contest the opponent).',
         '- For a "recover" move, circumstance reflects how SAFELY they can recover: unopposed with a reliable method +2; snatched under pressure with the enemy closing -2. Recovery never "fails into damage" — at worst it barely helps.',
         '- In an active duel nearly every player turn IS an exchange — the opponent presses regardless. A passive, hesitant, or purely defensive turn is an exchange with NEGATIVE circumstance, not exchange=false.',
@@ -1982,6 +2053,7 @@
             // damage to the opponent on a good roll (the fast-mode heal-attack
             // bug, reborn through the adjudicated path).
             sequence: (moveKind === 'attack' && rawSeq && rawSeq.length >= 2) ? rawSeq : null,
+            condition_change: normalizeConditionChange(obj.condition_change),
             why: String(obj.why || '').slice(0, 160),
         };
     }
@@ -2012,6 +2084,10 @@
         const oppRating = oEntry
             ? ratingFor(oEntry, d, fallback)
             : (Number.isFinite(oppEstimate) ? clamp(oppEstimate, 0, 10) : clamp(TIER_RATINGS.trained, 0, 10));
+        // Mode exclusivity: exactly ONE fight can be live. A manually-started
+        // battle left a prior duel frozen underneath (the interceptor served
+        // the duel while the HUD showed the battle — split-brain).
+        meta.battle = null;
         meta.duel = {
             active: true,
             over: false,
@@ -2618,6 +2694,31 @@
     // Last referee call, captured verbatim for the inspector (ephemeral, per session).
     let LAST_ADJ = null;
 
+    /** Rewind the WORLD (fights, threads, engines, seeds, tick/turn counters,
+     *  player composure) to a stored pre-turn snapshot. The single primitive
+     *  behind edit re-rolls, /arb re-adjudication, and timeline pruning. The
+     *  SHEET is deliberately not snapshotted: condition adds are name-deduped
+     *  (idempotent on replay) and rating baselines are cross-timeline facts. */
+    function restoreSnapshot(meta, snap) {
+        if (!snap || typeof snap !== 'object') return;
+        if ('d' in snap || 'b' in snap) {
+            meta.duel = deepCopy(snap.d);
+            meta.battle = deepCopy(snap.b);
+            if (snap.t !== undefined) meta.threads = deepCopy(snap.t) || [];
+            if (snap.e !== undefined && snap.e) meta.engines = deepCopy(snap.e);
+            if (snap.tc !== undefined) meta.tickCount = snap.tc;
+            if (snap.tn !== undefined) meta.turnCount = snap.tn;
+            if (snap.es !== undefined) meta.encounterSeeds = snap.es ? snap.es.slice() : undefined;
+            if (snap.ws !== undefined) meta.worldSeeds = snap.ws ? snap.ws.slice() : undefined;
+            if (snap.c !== undefined) {
+                if (snap.c === null) delete meta.composure;
+                else meta.composure = snap.c;
+            }
+        } else {
+            meta.duel = deepCopy(snap); // legacy v0.2 snapshot: duel-or-null
+        }
+    }
+
     async function interceptorBody(chat, contextSize, abort, type) {
         const s = getSettings();
         if (!s.enabled) return;
@@ -2648,6 +2749,66 @@
         if (!meta) return;
 
         const key = hashStr(String(lastUser.mes) + '|' + String(lastUser.send_date || ''));
+        const sendDate = String(lastUser.send_date || '');
+
+        // ── Committed-turn HISTORY: the timeline of resolved player turns ──
+        // Each committed turn stores its binding directive, its ambient-event
+        // text, and a snapshot of the world taken BEFORE that turn ran. This is
+        // what lets deleting a few exchanges, or branching a chat from an
+        // earlier point, REWIND fights/threads/engines/composure to exactly the
+        // surviving timeline instead of desyncing (the single-slot cache only
+        // ever covered the very last message).
+        if (!Array.isArray(meta.history)) meta.history = [];
+
+        // PRUNE: any suffix of committed turns whose user messages no longer
+        // exist in this chat (deleted tail, or a branch carrying a longer
+        // timeline's metadata) has vanished. Rewind the world to the moment
+        // before the OLDEST vanished turn and drop those entries. Suffix-only
+        // by design: fate-permanence for turns whose messages still stand.
+        try {
+            if (meta.history.length) {
+                const hKeys = new Set(meta.history.map(h => h.key));
+                const present = new Set();
+                let anchors = 0;
+                let scanned = 0;
+                for (let i = chat.length - 1; i >= 0 && scanned < 60; i--) {
+                    const m = chat[i];
+                    if (!m || !m.is_user || m.is_system || !m.mes || !String(m.mes).trim()) continue;
+                    scanned++;
+                    const k = hashStr(String(m.mes) + '|' + String(m.send_date || ''));
+                    present.add(k);
+                    if (hKeys.has(k)) anchors++;
+                }
+                // ANCHOR RULE: prune only when at least one committed turn is
+                // provably still in this chat. A view containing NONE of them
+                // (a truncated window, a foreign branch) is unrecognizable —
+                // acting on it would wipe live fights off mere invisibility.
+                if (anchors > 0) {
+                    let firstVanished = -1;
+                    for (let i = meta.history.length - 1; i >= 0; i--) {
+                        if (present.has(meta.history[i].key)) break; // this turn and everything older still stand
+                        firstVanished = i;
+                    }
+                    if (firstVanished !== -1) {
+                        const gone = meta.history.length - firstVanished;
+                        restoreSnapshot(meta, meta.history[firstVanished].snap);
+                        meta.history.length = firstVanished;
+                        // Re-point the single-slot mirror at the new last turn so
+                        // same-key replays and edit-rewinds keep working unchanged.
+                        const last = meta.history[meta.history.length - 1] || null;
+                        meta.cache = last ? { key: last.key, sendDate: last.sendDate, directive: last.directive, tier: last.tier, duelSnapshot: last.snap } : null;
+                        if (meta.eventCache && !present.has(meta.eventCache.key)) delete meta.eventCache;
+                        if (last && last.eventText) meta.eventCache = { key: last.key, text: last.eventText };
+                        renderHud(); renderThreads();
+                        saveMeta();
+                        dlog('timeline pruned:', gone, 'deleted turn(s) — world rewound to the surviving timeline');
+                    }
+                }
+            }
+        } catch (e) {
+            warn('history prune failed; clearing history to stay safe', e);
+            meta.history = [];
+        }
 
         // One-shot flags from /arb and /arbskip
         let force = meta.oneShot === 'force';
@@ -2693,26 +2854,16 @@
 
         // Re-rolling the SAME message (edit or /arb): rewind any fight AND the
         // background world to the state before that turn, or effects double.
-        const sendDate = String(lastUser.send_date || '');
         if (meta.cache && meta.cache.sendDate === sendDate && meta.cache.duelSnapshot !== undefined) {
-            const snap = meta.cache.duelSnapshot;
-            const copy = (o) => o ? JSON.parse(JSON.stringify(o)) : null;
-            if (snap && typeof snap === 'object' && ('d' in snap || 'b' in snap)) {
-                meta.duel = copy(snap.d);
-                meta.battle = copy(snap.b);
-                if (snap.t !== undefined) meta.threads = copy(snap.t) || [];
-                if (snap.e !== undefined && snap.e) meta.engines = copy(snap.e);
-                if (snap.tc !== undefined) meta.tickCount = snap.tc;
-                if (snap.es !== undefined) meta.encounterSeeds = snap.es ? snap.es.slice() : undefined;
-                if (snap.ws !== undefined) meta.worldSeeds = snap.ws ? snap.ws.slice() : undefined;
-                if (snap.c !== undefined) {
-                    if (snap.c === null) delete meta.composure;
-                    else meta.composure = snap.c;
-                }
-            } else {
-                meta.duel = copy(snap); // legacy v0.2 snapshot: duel-or-null
-            }
+            restoreSnapshot(meta, meta.cache.duelSnapshot);
             if (meta.eventCache && meta.eventCache.key === key) delete meta.eventCache;
+            // Keep the timeline consistent with the rewound world: this turn's
+            // committed entry is void (a fresh roll below re-commits, or — if
+            // the roll fails — the next attempt starts from this clean state).
+            if (meta.history.length) {
+                const last = meta.history[meta.history.length - 1];
+                if (last && (last.key === key || last.sendDate === sendDate)) meta.history.pop();
+            }
             // The committed fate no longer matches the rewound state: drop it.
             // If the re-roll below fails, the next attempt rolls fresh instead
             // of replaying a directive from a divergent timeline.
@@ -2728,21 +2879,39 @@
         if (meta.battle && meta.battle.over) { meta.battle = null; meta.seedDueAfterFight = true; }
         renderHud(); // re-sync every turn: any previously missed render self-heals
 
-        if (genType === 'normal') meta.turnCount = (meta.turnCount || 0) + 1;
-
-        // Snapshot the pre-turn world BEFORE any ticks or exchanges mutate it.
+        // Snapshot the pre-turn world BEFORE any ticks, exchanges, or counters
+        // mutate it (the turn counter increments AFTER, so snap.tn is truly
+        // pre-turn — the prune must not resurrect a deleted turn's count).
         const duelSnapshot = {
-            d: meta.duel ? JSON.parse(JSON.stringify(meta.duel)) : null,
-            b: meta.battle ? JSON.parse(JSON.stringify(meta.battle)) : null,
-            t: JSON.parse(JSON.stringify(meta.threads || [])),
-            e: meta.engines ? JSON.parse(JSON.stringify(meta.engines)) : null,
+            d: meta.duel ? deepCopy(meta.duel) : null,
+            b: meta.battle ? deepCopy(meta.battle) : null,
+            t: deepCopy(meta.threads || []),
+            e: meta.engines ? deepCopy(meta.engines) : null,
             tc: meta.tickCount || 0,
+            tn: meta.turnCount || 0,
             es: Array.isArray(meta.encounterSeeds) ? meta.encounterSeeds.slice() : null,
             ws: Array.isArray(meta.worldSeeds) ? meta.worldSeeds.slice() : null,
             // Player composure lives on meta, OUTSIDE duel/battle objects — without
             // this an edited re-send double-applies the turn's mental toll (a -3
             // horror beat re-rolled lands as -6): composure drift on every re-roll.
             c: (typeof meta.composure === 'number') ? meta.composure : null,
+        };
+
+        if (genType === 'normal') meta.turnCount = (meta.turnCount || 0) + 1;
+
+        // Commit a resolved turn: the single-slot mirror (fast path, legacy
+        // metas) AND the timeline history entry that makes it rewindable.
+        const commitCache = (directive, tier) => {
+            meta.cache = { key, sendDate, directive, tier, duelSnapshot };
+            if (!Array.isArray(meta.history)) meta.history = [];
+            const eventText = (meta.eventCache && meta.eventCache.key === key) ? meta.eventCache.text : null;
+            const entry = { key, sendDate, directive, tier, eventText, snap: duelSnapshot };
+            const last = meta.history[meta.history.length - 1];
+            // A force re-roll (same key) or an edit that slipped past the prune
+            // (same sendDate) REPLACES its turn; a fresh turn appends.
+            if (last && (last.key === key || last.sendDate === sendDate)) meta.history[meta.history.length - 1] = entry;
+            else meta.history.push(entry);
+            if (meta.history.length > HISTORY_CAP) meta.history.splice(0, meta.history.length - HISTORY_CAP);
         };
 
         // Background world: replay on the same message, tick on new ones.
@@ -2775,7 +2944,7 @@
             // Commit a no-check verdict WITH the pre-turn world snapshot, so
             // an edited resend of this message rewinds background ticks
             // instead of stacking a second one.
-            meta.cache = { key, sendDate, directive: '', tier: null, duelSnapshot };
+            commitCache('', null);
             saveMeta();
             return;
         }
@@ -2785,7 +2954,6 @@
         const t0 = Date.now();
         try {
             const budget = clamp(s.timeoutMs, 1500, 60000);
-            const commitCache = (directive, tier) => { meta.cache = { key, sendDate, directive, tier, duelSnapshot }; };
             const duelToast = (adjAction, res) => {
                 if (!s.toastResults) return;
                 const t = TIERS[res.tier] || {};
@@ -2871,10 +3039,13 @@
             let adj = normalize(rawOut);
 
             // One fast retry if the model returned junk and time remains.
-            if (!adj && rawOut && (Date.now() - t0) < budget - 1500) {
-                dlog('invalid JSON, retrying once');
+            // One fast retry if the model returned junk — OR nothing at all
+            // (a transient network blip / 429 used to mean a silently lost
+            // check; the empty case never retried) — and time remains.
+            if (!adj && (Date.now() - t0) < budget - 1500) {
+                dlog(rawOut ? 'invalid JSON, retrying once' : 'empty referee response, retrying once');
                 rawOut = await callLLM(
-                    sysPrompt + '\n\nYour previous output was invalid. Output ONLY the JSON object.',
+                    sysPrompt + (rawOut ? '\n\nYour previous output was invalid. Output ONLY the JSON object.' : ''),
                     userPrompt, 600, budget - (Date.now() - t0));
                 if (stale()) { dlog('chat changed mid-retry; stale check discarded'); return; }
                 adj = normalize(rawOut);
@@ -2892,7 +3063,12 @@
             let conditionNote = null;
             if (adj.condition_change) {
                 conditionNote = applyConditionChange(meta, adj.condition_change);
-                if (conditionNote) { saveMeta(); renderSheet(); dlog('condition:', conditionNote); }
+                if (conditionNote) {
+                    // The condition lands on the LIVE fight too, not only future
+                    // ones — a mid-duel "broken arm" changes THIS duel's math.
+                    try { refreshLiveRating(meta, adj.condition_change.who); } catch (e) { /* non-fatal */ }
+                    saveMeta(); renderSheet(); dlog('condition:', conditionNote);
+                }
             }
             // Mental strain from the fiction's emotional weight.
             let composureNote = null;
@@ -3688,7 +3864,8 @@
             if (!m) return;
             if (m.battle) endBattle(m, false);
             else if (m.duel) endDuel(m, false);
-            m.cache = null; // an ended fight can't be resurrected by a re-roll
+            m.cache = null; // an ended fight can't be resurrected by a re-roll…
+            m.history = []; // …nor by a timeline prune-restore
             saveMeta();
         } catch (e) { warn('HUD dismiss failed', e); }
     }
@@ -3833,6 +4010,7 @@
         meta.threads = [];
         meta.log = [];
         meta.cache = null;
+        meta.history = [];
         meta.oneShot = null;
         meta.duel = null;
         meta.battle = null;

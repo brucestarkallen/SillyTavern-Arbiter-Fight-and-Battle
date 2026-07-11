@@ -32,12 +32,16 @@ as before.
 - **Builds its own capability sheet** by reading your story and memory as you play —
   no manual stat entry — and calibrates ratings to the setting's *own* power
   hierarchy (a top-ranked "student" is rated elite, not average).
+- **Survives your editing habits** — every resolved turn is a save-state. Swipes
+  replay the committed fate, edits re-roll from the exact pre-turn world, and
+  **deleting a few exchanges (or branching the chat) automatically rewinds**
+  fights, composure, and the background world to the surviving timeline.
 
 Under the hood it's rigorously fair: exchange damage is exactly symmetric (no hidden
 tilt toward the player), the referee only ever sees a neutral prompt (never your
 persona or the card's "unbeatable protagonist" framing), and the injected verdict is
 purely qualitative — it never leaks a die, a probability, or a stat to the
-storyteller. The whole engine is covered by 45 regression suites that freeze those
+storyteller. The whole engine is covered by 50 regression suites that freeze those
 fairness, stability, and no-spoiler guarantees; see the audit notes further down.
 
 ## How it works
@@ -386,6 +390,46 @@ So revealing your true power can rout a lesser enemy before a blow lands, and a
 terrifying monster can unnerve you in the same fight. (Ambient, non-combatant
 crowds are still narrated rather than individually simulated — but anyone you
 actually fight has a real, breakable nerve.)
+
+## The timeline is a save file — delete, edit, branch freely (v0.30)
+
+Every resolved player turn now commits to a bounded **timeline history** (last 12
+turns): the binding directive, the ambient event, and a snapshot of the world taken
+*before* that turn ran. Each generation, Arbiter verifies its committed turns still
+exist in the chat:
+
+- **Swipe / regenerate the last message** → the committed fate replays verbatim.
+  Re-rolling prose never re-rolls dice.
+- **Edit a message** → that turn is void; the world rewinds to the moment before it
+  and the edited action gets one fresh, fair roll.
+- **Delete the last few exchanges** (the classic "let me redo this scene") → the
+  vanished turns are pruned and the fight, your composure, the tick counters, and
+  the world threads all rewind to the surviving timeline. Regenerating an older
+  message replays *its* committed fate against the state it was actually rolled in.
+- **Branch a chat** from an earlier point → the copied metadata self-corrects the
+  same way on the first generation.
+
+An **anchor rule** keeps this safe: pruning only happens when at least one committed
+turn is *provably still present* in the chat — a truncated or unrecognizable view
+can never wipe a live fight. Ending a fight by hand (HUD ✕) also clears the
+timeline, so a dismissed fight can't be resurrected by a rewind. The sheet is
+deliberately *not* rewound: ratings and conditions are cross-timeline facts, and
+condition adds are name-deduped so replays stay idempotent.
+
+Also in v0.30:
+
+- **Persistent conditions land mid-fight now.** The referee can establish or
+  resolve a lasting condition *during* duels, battles, and wars (a shattered sword
+  arm, poison taking hold, a disarm, seized gear) — previously that channel only
+  existed for standalone checks. The condition hits the **live** fight's math the
+  same turn, not just future encounters.
+- **Estimated combatants keep their measure.** A condition landing on an unlisted
+  foe used to create its sheet entry at the default rating (your estimated
+  rating-9 dragon reborn as a 5). The entry now seeds from the live fight's rating.
+- **One fight at a time.** Starting a duel ends any battle and vice versa — no more
+  split-brain where the HUD showed one fight and the interceptor served another.
+- **A transient empty referee response retries once** instead of silently dropping
+  the check.
 
 ## Armies can genuinely lose — war fairness fix (v0.28)
 
