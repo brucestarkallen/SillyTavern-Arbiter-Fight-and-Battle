@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.30.0';
+    const VERSION = '0.31.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
     // Committed-turn history depth: how many resolved player turns keep a
@@ -446,7 +446,7 @@
         wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick,
         resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, buildDuelDirective, buildDirective,
         startBattle, resolveBattleRound, startWar, resolveWarRound, normalizeBattleAdj, normalizeWarAdj, normalizeAdj, startDuel,
-        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, applyConditionChange, liveCombatant, refreshLiveRating, restoreSnapshot, deepCopy, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
+        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, applyConditionChange, liveCombatant, refreshLiveRating, mcName, mcAliases, isMcAlias, samePersonName, reconcilePlayerEntries, seedSheet, restoreSnapshot, deepCopy, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -569,6 +569,94 @@
             if (c.saveMetadataDebounced) c.saveMetadataDebounced();
             else if (c.saveMetadata) c.saveMetadata();
         } catch (e) { warn('saveMeta failed', e); }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Player identity — the STORY name vs the persona label               */
+    /* ------------------------------------------------------------------ */
+    /** The player's in-story name. SillyTavern's name1 is the PERSONA LABEL
+     *  (who is typing); the fiction may call the character something entirely
+     *  different (persona "LO" playing "Jovan Oda") — zero shared tokens, so
+     *  no fuzzy matcher can bridge them. meta.mcName — set in Manual
+     *  controls, by /mcname, or learned by the sheet seeder — is the story
+     *  identity used for prompts, sheet lookups, fights, conditions, and
+     *  logs; empty falls back to the label so single-name setups behave
+     *  exactly as before. Chat-scoped: each chat is its own universe. */
+    function mcName(meta) {
+        const m = meta || getMeta();
+        const v = m && typeof m.mcName === 'string' ? m.mcName.trim() : '';
+        return v || ctx().name1 || 'Player';
+    }
+
+    /** Every name that means "the player": the story name plus, when it
+     *  differs, the persona label (the transcript still tags the player's
+     *  messages with the label, and the referee may echo either). */
+    function mcAliases(meta) {
+        const out = [mcName(meta)];
+        const label = String(ctx().name1 || '').trim();
+        if (label && label.toLowerCase() !== out[0].toLowerCase()) out.push(label);
+        return out;
+    }
+
+    /** Same-person identity between two raw names: exact, or one name's
+     *  tokens a subset of the other's ("Kaiser" ↔ "Kaiser von Adler").
+     *  Token-based, never a substring, and a merely shared surname is NOT
+     *  identity (a sibling carries a distinct given name). */
+    function samePersonName(a, b) {
+        const nrm = (x) => String(x || '').toLowerCase().trim();
+        const toks = (x) => nrm(x).split(/[\s,]+/).filter(Boolean);
+        const at = toks(a), bt = toks(b);
+        if (!at.length || !bt.length) return false;
+        return nrm(a) === nrm(b) || at.every(t => bt.includes(t)) || bt.every(t => at.includes(t));
+    }
+
+    /** Is `name` the player under ANY alias? Same token semantics as the
+     *  opponent hardening: exact, a fragment of an alias (a bare surname or
+     *  given name), or an alias extended ("Jovan" ↔ "Jovan Wessex"). */
+    function isMcAlias(meta, name) {
+        const n = String(name || '').trim();
+        if (!n) return false;
+        return mcAliases(meta).some(a => samePersonName(n, a));
+    }
+
+    /** Heal a split identity: when the story name is known and a SEPARATE
+     *  sheet entry sits under the persona label (conditions the referee filed
+     *  on "LO" while the ratings live on "Jovan Oda"), fold the label entry
+     *  into the story entry. Existing story-entry values win; the label entry
+     *  only fills missing domains and contributes its conditions. */
+    function reconcilePlayerEntries(meta) {
+        if (!meta || !meta.sheet || !meta.sheet.actors) return false;
+        const story = mcName(meta);
+        const label = String(ctx().name1 || '').trim();
+        if (!label || label.toLowerCase() === story.toLowerCase()) return false;
+        let labelKey = null;
+        for (const k of Object.keys(meta.sheet.actors)) {
+            if (k.toLowerCase().trim() === label.toLowerCase()) { labelKey = k; break; }
+        }
+        if (!labelKey || samePersonName(labelKey, story)) return false;
+        const storyKey = findActorKeySamePerson(meta, story);
+        const src = meta.sheet.actors[labelKey];
+        if (!src || typeof src !== 'object') return false;
+        let dst = storyKey ? meta.sheet.actors[storyKey] : null;
+        if (!dst) {
+            dst = { default: clamp(src.default ?? 5, 0, 10), domains: {}, _auto: src._auto === true };
+            meta.sheet.actors[story] = dst;
+        }
+        dst.domains = dst.domains || {};
+        for (const [d, v] of Object.entries(src.domains || {})) {
+            if (dst.domains[d] === undefined) dst.domains[d] = v;
+        }
+        if (Array.isArray(src.conditions) && src.conditions.length) {
+            dst.conditions = Array.isArray(dst.conditions) ? dst.conditions : [];
+            const have = new Set(dst.conditions.map(cn => String(cn.name || '').toLowerCase()));
+            for (const cn of src.conditions) {
+                if (!have.has(String(cn.name || '').toLowerCase())) dst.conditions.push(cn);
+            }
+        }
+        if (Number.isFinite(Number(src.poise)) && dst.poise === undefined) dst.poise = src.poise;
+        delete meta.sheet.actors[labelKey];
+        dlog('player identity reconciled:', labelKey, '→', storyKey || story);
+        return true;
     }
 
     /* ------------------------------------------------------------------ */
@@ -861,7 +949,11 @@
 
     function buildAdjUserPrompt(chat, lastUserMes, meta) {
         const s = getSettings();
-        const playerName = ctx().name1 || 'Player';
+        const playerName = mcName(meta);
+        const playerLabel = ctx().name1 || '';
+        const labelNote = (playerLabel && playerLabel.toLowerCase() !== playerName.toLowerCase())
+            ? ' The player\'s own messages in <recent> are labeled "' + playerLabel + '" — that label is the SAME person as ' + playerName + ', never a separate character and never the opponent.'
+            : '';
         const sheet = JSON.stringify(meta.sheet || { actors: {} });
         const recent = s.adjFullChat
             ? budgetedTranscript(chat, clamp(s.adjContextK, 4, 500) * 1000, lastUserMes, !!s.adjIncludeHidden)
@@ -869,10 +961,10 @@
         const action = String(lastUserMes.mes).slice(0, 700);
         const memBlock = s.adjIncludeMemory ? collectMemoryBlock(clamp(s.adjContextK, 4, 500) * 1000).block : '';
         const cardBlock = s.adjIncludeCard ? collectStoryContext(clamp(s.adjContextK, 4, 500) * 1000) : '';
-        return '<player>\nThe player character is "' + playerName + '". The text in <action> is written BY the player: "I" and second-person "you" in it both mean ' + playerName + ' acting. The player may appear in <recent> under a FULLER name — a given name plus a family name/surname, a title, or a nickname (e.g. "' + playerName + ' Somesurname", or just "Somesurname"). EVERY part of the player\'s name refers to the player. Never treat the player\'s own surname, given name, or any part of their name as a separate person, and never let it become the opponent. The storyteller\'s messages in <recent> may be labeled with a card/narrator name that is NOT a combatant.\n</player>\n\n<sheet>\n' + sheet + '\n</sheet>\n\n' + (cardBlock ? cardBlock + '\n\n' : '') + (memBlock ? memBlock + '\n\n' : '') + '<recent>\n' + recent + '\n</recent>\n\n<action>\n' + action + '\n</action>';
+        return '<player>\nThe player character is "' + playerName + '". The text in <action> is written BY the player: "I" and second-person "you" in it both mean ' + playerName + ' acting.' + labelNote + ' The player may appear in <recent> under a FULLER name — a given name plus a family name/surname, a title, or a nickname (e.g. "' + playerName + ' Somesurname", or just "Somesurname"). EVERY part of the player\'s name refers to the player. Never treat the player\'s own surname, given name, or any part of their name as a separate person, and never let it become the opponent. The storyteller\'s messages in <recent> may be labeled with a card/narrator name that is NOT a combatant.\n</player>\n\n<sheet>\n' + sheet + '\n</sheet>\n\n' + (cardBlock ? cardBlock + '\n\n' : '') + (memBlock ? memBlock + '\n\n' : '') + '<recent>\n' + recent + '\n</recent>\n\n<action>\n' + action + '\n</action>';
     }
 
-    function normalizeAdj(obj) {
+    function normalizeAdj(obj, meta) {
         if (!obj || typeof obj !== 'object') return null;
         if (obj.check === false) return { check: false };
         if (obj.check !== true) return null;
@@ -881,10 +973,11 @@
         // identity swap (narrator card scored as the actor vs the player's
         // own stats), so we enforce it: keep the model's claim only to
         // repair an inverted duel_start below.
-        const playerName = ctx().name1 || 'Player';
+        const playerName = mcName(meta);
+        const playerLabel = ctx().name1 || '';
         const modelActor = String(obj.actor || '').trim();
         const actor = playerName;
-        const kind = obj.opposition_kind === 'actor' ? 'actor' : 'tier';
+        let kind = obj.opposition_kind === 'actor' ? 'actor' : 'tier';
         let opposition = String(obj.opposition || 'moderate').trim() || 'moderate';
 
         // ── Opponent-identity hardening (fool-proofing) ───────────────────
@@ -903,12 +996,13 @@
         // (persona "Jovan" vs the story's "Jovan Wessex"). A name that carries a
         // distinct token in BOTH directions (a sibling "Claire Wessex", or an
         // unrelated "Anakin") is a different person.
-        const isPlayerish = (n) => !!n && (nrm(n) === nrm(playerName) || subsetOf(n, playerName) || subsetOf(playerName, n));
+        const selfNames = (playerLabel && nrm(playerLabel) !== nrm(playerName)) ? [playerName, playerLabel] : [playerName];
+        const isPlayerish = (n) => !!n && selfNames.some(p => nrm(n) === nrm(p) || subsetOf(n, p) || subsetOf(p, n));
         // The model's OWN actor claim counts as the player when it carries the
         // player's name tokens (persona "Jovan" -> claim "Jovan Wessex"). A single
         // word of THAT claim handed back as the foe is the name-split misparse —
         // the surname the referee wrongly peeled off the player.
-        const actorIsPlayer = !!modelActor && (subsetOf(playerName, modelActor) || isPlayerish(modelActor));
+        const actorIsPlayer = !!modelActor && (selfNames.some(p => subsetOf(p, modelActor)) || isPlayerish(modelActor));
         const isNamePartOfActor = (n) => { if (!n || !actorIsPlayer) return false; const at = toksOf(modelActor); return at.length > 1 && at.includes(nrm(n)); };
         const isSelf = (n) => isPlayerish(n) || isNamePartOfActor(n);
         const TIER_WORDS = new Set(['trivial', 'easy', 'moderate', 'hard', 'extreme', 'mook', 'trained', 'competent', 'veteran', 'elite', 'formidable', 'master', 'legendary', 'apex', 'inferior', 'peer', 'superior']);
@@ -928,8 +1022,12 @@
             dlog('self-named duel_start repaired →', duelStart || '(dropped to single check)');
         }
         if (kind === 'actor' && isSelf(opposition)) {
-            opposition = cleanFoe(duelStart, modelActor) || 'hard';
-            dlog('self-named opposition repaired →', opposition);
+            const recovered = cleanFoe(duelStart, modelActor);
+            opposition = recovered || 'hard';
+            // No real foe recoverable → the fallback is a TASK TIER, and must
+            // resolve as one ('hard' = 7), not as an unlisted actor (trained 5).
+            if (!recovered) kind = 'tier';
+            dlog('self-named opposition repaired →', opposition, '(' + kind + ')');
         }
         let battleStart = normalizeRoster(obj.battle_start);
         if (battleStart) {
@@ -976,7 +1074,8 @@
         const nrm = (x) => String(x || '').toLowerCase().trim();
         const t = nrm(name);
         if (!t) return null;
-        const match = (u) => u && nrm(u.name) === t;
+        const playerish = isMcAlias(meta, name);
+        const match = (u) => u && (nrm(u.name) === t || (playerish && (u.isPlayer === true || (meta.duel && u === meta.duel.player))));
         if (meta.duel) {
             if (match(meta.duel.player)) return meta.duel.player;
             if (match(meta.duel.opp)) return meta.duel.opp;
@@ -992,8 +1091,8 @@
      *  future ones: refresh the affected combatant's effective rating in
      *  place from the (just-updated) sheet. */
     function refreshLiveRating(meta, who) {
-        const playerName = ctx().name1 || 'Player';
-        const name = /^(you|player|me|myself)$/i.test(String(who || '')) ? playerName : who;
+        const playerName = mcName(meta);
+        const name = (/^(you|player|me|myself)$/i.test(String(who || '')) || isMcAlias(meta, who)) ? playerName : who;
         const u = liveCombatant(meta, name);
         if (!u) return;
         const entry = findActor(meta, name);
@@ -1009,8 +1108,8 @@
      *  sticks even for someone not yet rated. Returns a note for narration. */
     function applyConditionChange(meta, cc) {
         if (!cc) return null;
-        const playerName = ctx().name1 || 'Player';
-        const name = /^(you|player|me|myself)$/i.test(cc.who) ? playerName : cc.who;
+        const playerName = mcName(meta);
+        const name = (/^(you|player|me|myself)$/i.test(cc.who) || isMcAlias(meta, cc.who)) ? playerName : cc.who;
         meta.sheet = meta.sheet || { actors: {} };
         let entry = findActor(meta, name);
         if (!entry) {
@@ -1173,7 +1272,7 @@
     function startBattle(meta, allyNames, enemyNames, domain, scaleMismatch, oppEstimate) {
         const s = getSettings();
         const d = String(domain || 'melee').toLowerCase();
-        const playerName = ctx().name1 || 'Player';
+        const playerName = mcName(meta);
         const pEntry = findActor(meta, playerName);
         const mc = {
             name: playerName,
@@ -1181,7 +1280,7 @@
             poise: poiseFor(pEntry, s.duelPoise), maxPoise: poiseFor(pEntry, s.duelPoise),
             injuries: 0, momentum: 0, opening: false, standing: true, isPlayer: true,
         };
-        const allies = buildUnits(meta, (allyNames || []).filter(n => !isPlayerName(n, playerName)), d, false);
+        const allies = buildUnits(meta, (allyNames || []).filter(n => !isMcAlias(meta, n)), d, false);
         const enemies = buildUnits(meta, enemyNames || [], d, true, oppEstimate);
         if (!enemies.length) return null;
         meta.duel = null; // mode exclusivity — see startDuel
@@ -1405,7 +1504,7 @@
     function startWar(meta, allyNames, enemyNames, enemyCommander, scaleMismatch) {
         const s = getSettings();
         const d = 'war';
-        const playerName = ctx().name1 || 'Player';
+        const playerName = mcName(meta);
         const pEntry = findActor(meta, playerName);
         const fallback = clamp(s.defaultRating, 0, 10);
         // Commander tactics: prefer a tactics/command/intellect domain, else default.
@@ -1437,7 +1536,7 @@
             }
             return units;
         };
-        const allies = mkUnits((allyNames || []).filter(n => !isPlayerName(n, playerName)), false);
+        const allies = mkUnits((allyNames || []).filter(n => !isMcAlias(meta, n)), false);
         const enemies = mkUnits(enemyNames || [], true);
         if (!enemies.length) return null;
         meta.duel = null; // mode exclusivity — see startDuel
@@ -2342,7 +2441,7 @@
         const s = getSettings();
         const preset = getPreset();
         const attempt = String(lastUserMes.mes).replace(/\s+/g, ' ').slice(0, 90);
-        const who = (ctx().name1 || 'The player');
+        const who = mcName(meta);
         const row = (label, delta) => {
             const P = probFromDelta(clamp(delta + preset.bonus, -13, 13));
             const tier = TIERS[sliceOutcome(P, rngFloat(), preset.mods)];
@@ -2584,7 +2683,7 @@
         }
 
         const preset = getPreset();
-        const isPlayerActor = (adj.actor || '').toLowerCase() === (ctx().name1 || 'player').toLowerCase();
+        const isPlayerActor = isMcAlias(meta, adj.actor);
         const compPen = isPlayerActor ? composurePenalty(meta) : 0;
         const delta = clamp(aR - oR + adj.circumstance + (adj.scale_mismatch || 0) + compPen + preset.bonus, -13, 13);
         const P = probFromDelta(delta);
@@ -2983,7 +3082,7 @@
                     const directive = buildWarDirective(meta, { action }, out);
                     setInjection(directive);
                     commitCache(directive, out.focalRes ? out.focalRes.tier : null);
-                    if (out.focalRes) pushLog(meta, { action, domain: 'war', actor: ctx().name1 || 'Player', circumstance: 0, why: 'fast' }, out.focalRes, meta.battle.round);
+                    if (out.focalRes) pushLog(meta, { action, domain: 'war', actor: mcName(meta), circumstance: 0, why: 'fast' }, out.focalRes, meta.battle.round);
                     saveMeta(); renderHud(); renderLog();
                     if (out.focalRes) duelToast(action, out.focalRes);
                 } else if (inBattle) {
@@ -2991,7 +3090,7 @@
                     const directive = buildBattleDirective(meta, { action }, out);
                     setInjection(directive);
                     commitCache(directive, out.mcRes ? out.mcRes.tier : null);
-                    if (out.mcRes) pushLog(meta, { action, domain: meta.battle.domain, actor: ctx().name1 || 'Player', circumstance: 0, why: 'fast' }, out.mcRes, meta.battle.round);
+                    if (out.mcRes) pushLog(meta, { action, domain: meta.battle.domain, actor: mcName(meta), circumstance: 0, why: 'fast' }, out.mcRes, meta.battle.round);
                     saveMeta(); renderHud(); renderLog();
                     if (out.mcRes) duelToast(action, out.mcRes);
                 } else {
@@ -3031,7 +3130,7 @@
             if (stale()) { dlog('chat changed mid-adjudication; stale check discarded'); return; }
             const normalize = (r) => {
                 for (const cand of extractJsonCandidates(r, 5)) {
-                    const n = inDuel ? normalizeDuelAdj(cand) : (inWar ? normalizeWarAdj(cand) : (inBattle ? normalizeBattleAdj(cand) : normalizeAdj(cand)));
+                    const n = inDuel ? normalizeDuelAdj(cand) : (inWar ? normalizeWarAdj(cand) : (inBattle ? normalizeBattleAdj(cand) : normalizeAdj(cand, meta)));
                     if (n) return n;
                 }
                 return null;
@@ -3076,8 +3175,8 @@
                 const cr = applyComposureChange(meta, adj.composure_change);
                 if (cr) {
                     composureNote = cr.worsened
-                        ? 'The strain shows — ' + (ctx().name1 || 'the player') + ' is ' + cr.state + '.'
-                        : (ctx().name1 || 'the player') + ' steadies, now ' + cr.state + '.';
+                        ? 'The strain shows — ' + mcName(meta) + ' is ' + cr.state + '.'
+                        : mcName(meta) + ' steadies, now ' + cr.state + '.';
                     saveMeta(); renderHud(); dlog('composure', cr.before, '→', cr.now, '(' + cr.state + ')');
                 }
             }
@@ -3100,7 +3199,7 @@
                 const directive = buildWarDirective(meta, adj, out);
                 setInjection(directive);
                 commitCache(directive, out.focalRes ? out.focalRes.tier : null);
-                if (out.focalRes) pushLog(meta, { action: adj.action, domain: 'war', actor: ctx().name1 || 'Player', circumstance: adj.circumstance, why: adj.why }, out.focalRes, meta.battle.round);
+                if (out.focalRes) pushLog(meta, { action: adj.action, domain: 'war', actor: mcName(meta), circumstance: adj.circumstance, why: adj.why }, out.focalRes, meta.battle.round);
                 saveMeta(); renderHud(); renderLog();
                 dlog('war round', meta.battle.round, 'resolved');
                 if (out.focalRes) duelToast(adj.action, out.focalRes);
@@ -3125,7 +3224,7 @@
                 const directive = buildBattleDirective(meta, adj, out);
                 setInjection(directive);
                 commitCache(directive, out.mcRes ? out.mcRes.tier : null);
-                if (out.mcRes) pushLog(meta, { action: adj.action, domain: meta.battle.domain, actor: ctx().name1 || 'Player', circumstance: adj.circumstance, why: adj.why }, out.mcRes, meta.battle.round);
+                if (out.mcRes) pushLog(meta, { action: adj.action, domain: meta.battle.domain, actor: mcName(meta), circumstance: adj.circumstance, why: adj.why }, out.mcRes, meta.battle.round);
                 saveMeta(); renderHud(); renderLog();
                 dlog('battle round', meta.battle.round, 'resolved in', Date.now() - t0, 'ms');
                 if (out.mcRes) duelToast(adj.action, out.mcRes);
@@ -3297,13 +3396,14 @@
         'You read a roleplay transcript and produce a capability sheet for outcome adjudication. Output STRICT JSON only, one object, no markdown.',
         '',
         'Schema:',
-        '{"actors": {"<Name>": {"default": <0-10>, "domains": {"<domain>": <0-10>, ...}}, ...}}',
+        '{"player_story_name": "<the player character\'s full IN-STORY name, exactly as the fiction uses it>", "actors": {"<Name>": {"default": <0-10>, "domains": {"<domain>": <0-10>, ...}}, ...}}',
         '',
         'Rating guide (by effective threat, ANY kind of combatant — person, beast, monster, machine, alien): 2 untrained, 4 trained, 5 competent professional, 6 veteran, 7 elite, 8 master, 9 legendary, 10 apex. Rate creatures by how dangerous they are, not their species: a feral dog 3, a warhound 5, a dire beast or trained monster 7, an ancient dragon or apex predator 9-10. A domain like "melee" for a beast means its natural weapons (claws, fangs, breath).',
         'CALIBRATE TO THE STORY\'S OWN HIERARCHY: the labels above are a baseline, but if the setting has ranks, tiers, classes, or a clear pecking order (school rankings like A/B/C, tournament seeding, dueling classes, a military chain, a stated power-level system), place each character WITHIN it. Someone at or near the top of that structure — a top-ranked or high-tier student, a champion, an ace, a captain, a feared name — belongs at the HIGH end (7-9), even if words like "student" or "young" make them sound junior. Read the ranking, not the job title.',
         'Domains are lowercase single words (melee, ranged, stealth, social, athletics, intellect, willpower, pilot, craft — invent others only if the story clearly needs them).',
         'Include the player character AND every named CHARACTER in the story — allies, rivals, mentors, recurring NPCs, and people listed in <known_characters> — not only those active in the recent transcript. A large cast is expected; cover everyone named and do NOT silently drop characters to save space. 2-4 domains per actor is plenty. Rate from evidence in the transcript and memory. When unsure about an ordinary or background figure, prefer 4-6 — but a named rival, antagonist, boss, or anyone the player faces in a SERIOUS fight is a genuine challenge: rate them as a PEER of the player or stronger unless the fiction plainly shows they are outmatched. Never default a named threat to average. Merge obvious duplicates or aliases into a single entry.',
         'Rate each character at their CURRENT power level as of the latest events. If the story shows someone has trained, leveled up, unlocked new power, or grown stronger since earlier, reflect that higher rating now — a character who was trained (4) and has since become elite should be rated elite (7). The <existing_sheet> shows prior ratings; when the fiction clearly shows growth beyond them, rate the new, higher level.',
+        'player_story_name: the name the STORY calls the player character — their actual in-fiction identity (a full given name + surname when the fiction uses one), which may be COMPLETELY different from the player_character label in <voices>. Read it from the transcript and memory. If the fiction only ever uses the label, return the label. Key the player\'s actors entry under this same name.',
         'CRITICAL: actors are PEOPLE and creatures ONLY. Never create an entry for a place, city, academy, school, house, clan, faction, organization, team name, region, or title. If a name in <known_characters> is a location or institution (e.g. an academy or a noble house), leave it out entirely. When a name is ambiguous, include it only if the story clearly uses it as an individual who acts and fights.',
     ].join('\n');
 
@@ -3341,9 +3441,13 @@
         const mem = collectMemoryBlock(clamp(s.seedMemoryK, 2, 500) * 1000);
         const roster = collectKnownNames(meta, mem);
         const rosterBlock = roster.length ? '<known_characters>\n' + roster.join(', ') + '\n</known_characters>\n\n' : '';
-        const playerName = c.name1 || 'Player';
+        const playerName = mcName(meta);
+        const playerLabel = c.name1 || '';
         const cardName = c.name2 || '';
-        const voices = '<voices>\nplayer_character: ' + playerName + '\n' +
+        const labelLine = (playerLabel && playerLabel.toLowerCase() !== playerName.toLowerCase())
+            ? 'player_message_label: ' + playerLabel + ' — this labels the player\'s own messages in the transcript; it is the SAME person as ' + playerName + '. Key the player\'s entry under "' + playerName + '" and never create a separate actor for the label.\n'
+            : '';
+        const voices = '<voices>\nplayer_character: ' + playerName + '\n' + labelLine +
             (cardName ? 'storyteller_label: ' + cardName + ' — this labels the narrator/storyteller\'s messages in the transcript. Do NOT create an actor entry for it unless the story clearly shows an individual PERSON by this exact name who acts and fights in scenes.\n' : '') +
             '</voices>\n\n';
         const userPrompt = '<existing_sheet>\n' + existing + '\n</existing_sheet>\n\n' + voices + rosterBlock + (mem.block ? mem.block + '\n\n' : '') + '<transcript>\n' +
@@ -3407,6 +3511,27 @@
             meta.sheet.actors[key] = clean;
             added++;
         }
+        // Learn the player's in-story name (persona label ≠ story identity).
+        // Only fills an EMPTY mcName — a user-set or previously learned name
+        // is never overwritten by a later seed. The narrator card's label is
+        // rejected unless it is also the player's own name.
+        const learned = typeof obj.player_story_name === 'string'
+            ? obj.player_story_name.trim().replace(/\s+/g, ' ').slice(0, 60) : '';
+        if (learned && !(typeof meta.mcName === 'string' && meta.mcName.trim())) {
+            const cardish = !!cardName && samePersonName(learned, cardName)
+                && !samePersonName(learned, playerLabel || playerName);
+            if (!cardish) {
+                meta.mcName = learned;
+                try { $('#arb_mcname').val(learned); } catch (e) { /* headless */ }
+                if (playerLabel && learned.toLowerCase() !== playerLabel.toLowerCase()) {
+                    toast('info', 'Arbiter identified your character as "' + learned + '" — fights, ratings, and conditions now use that name. Override it in Manual controls if wrong.', 'Player identity');
+                }
+                dlog('player story name learned:', learned);
+            } else dlog('player_story_name rejected (narrator card label):', learned);
+        }
+        // Heal any split created before the identity was known (a "label"
+        // entry holding conditions beside the real story entry).
+        reconcilePlayerEntries(meta);
         saveMeta();
         renderSheet();
         if (o.auto) {
@@ -3585,6 +3710,10 @@
           <label>War strength</label><input id="arb_warstr" type="number" min="4" max="40" class="text_pole arb_num">
         </div>
         <div class="arb_hint">The referee opens duels/battles when combat clearly starts and closes them when the fiction ends one. HUD: floating round + poise bars (✕ ends the fight). Poise: 5 suits people, 6-8 mecha Frames; a "poise" key per actor in the sheet overrides.</div>
+        <div class="arb_row">
+          <label>Your character</label><input id="arb_mcname" type="text" class="text_pole" placeholder="story name (blank = persona name)">
+        </div>
+        <div class="arb_hint">The name the STORY calls your character, when it differs from your persona label (persona "LO" playing "Jovan Oda"). It keys your sheet ratings, names you in fights, and tells the referee who you are. Auto-detected by seeding; per chat. /mcname &lt;name&gt; works too.</div>
         <div class="arb_row">
           <label>Duel vs</label><input id="arb_duel_name" type="text" class="text_pole" placeholder="opponent name">
           <div id="arb_duel_start" class="menu_button">Start duel</div>
@@ -4073,11 +4202,18 @@
             const name = String($('#arb_duel_name').val() || '').trim();
             if (!name) { toast('warning', 'Give the opponent a name first.'); return; }
             const meta = getMeta(); if (!meta) return;
-            startDuel(meta, ctx().name1 || 'Player', name, 'melee');
+            startDuel(meta, mcName(meta), name, 'melee');
             saveMeta(); renderHud();
-            toast('success', (ctx().name1 || 'Player') + ' vs ' + name + ' — duel armed. Your next message is round 1.');
+            toast('success', mcName(meta) + ' vs ' + name + ' — duel armed. Your next message is round 1.');
         });
         $('#arb_duel_end').on('click', () => { const m = getMeta(); if (m && m.duel) { endDuel(m); saveMeta(); } });
+        $('#arb_mcname').val(((getMeta() || {}).mcName) || '').on('input', function () {
+            const m = getMeta(); if (!m) return;
+            const v = String(this.value || '').trim().slice(0, 60);
+            if (v) m.mcName = v; else delete m.mcName;
+            reconcilePlayerEntries(m);
+            saveMeta(); renderHud();
+        });
 
         $('#arb_autobattle').prop('checked', !!s.autoBattle).on('change', function () { s.autoBattle = this.checked; saveSettings(); });
         $('#arb_autowar').prop('checked', !!s.autoWar).on('change', function () { s.autoWar = this.checked; saveSettings(); });
@@ -4209,11 +4345,23 @@
             ['arb', () => { const m = getMeta(); if (m) { m.oneShot = 'force'; saveMeta(); } toast('info', 'Next action will be adjudicated.'); return ''; }, 'Force Arbiter to adjudicate the next action.'],
             ['arbskip', () => { const m = getMeta(); if (m) { m.oneShot = 'skip'; saveMeta(); } toast('info', 'Next action will skip adjudication.'); return ''; }, 'Skip Arbiter on the next action.'],
             ['arbseed', () => { seedSheet(); return ''; }, 'Build/refresh the Arbiter capability sheet from the story.'],
+            ['mcname', (na, text) => {
+                const m = getMeta(); if (!m) { toast('warning', 'No chat open.'); return ''; }
+                const v = String(text || '').trim();
+                if (!v) { toast('info', 'Player character: "' + mcName(m) + '"' + (m.mcName ? '' : ' (persona default)') + '. /mcname <name> to set, /mcname clear to unset.'); return ''; }
+                if (/^clear$/i.test(v)) { delete m.mcName; reconcilePlayerEntries(m); saveMeta(); try { $('#arb_mcname').val(''); } catch (e) {} toast('success', 'Player story name cleared — using the persona name.'); return ''; }
+                m.mcName = v.slice(0, 60);
+                reconcilePlayerEntries(m);
+                saveMeta(); renderHud();
+                try { $('#arb_mcname').val(m.mcName); } catch (e) {}
+                toast('success', 'Player character is now "' + m.mcName + '" for fights, ratings, conditions, and the referee.');
+                return '';
+            }, 'Set your character\'s STORY name when it differs from the persona label. /mcname clear resets.'],
             ['duel', (na, text) => {
                 const name = String(text || '').trim();
                 if (!name) { toast('warning', 'Usage: /duel <opponent name>'); return ''; }
                 const m = getMeta(); if (!m) return '';
-                startDuel(m, ctx().name1 || 'Player', name, 'melee');
+                startDuel(m, mcName(m), name, 'melee');
                 saveMeta(); renderHud();
                 toast('success', 'Duel armed vs ' + name + '. Your next message is round 1.');
                 return '';
@@ -4330,6 +4478,7 @@
         if (et.CHAT_CHANGED) es.on(et.CHAT_CHANGED, () => {
             chatEpoch++; // any in-flight check/seed from the previous chat is now stale
             clearInjection();
+            $('#arb_mcname').val(((getMeta() || {}).mcName) || ''); // per-chat identity
             renderSheet();
             renderLog();
             renderHud();

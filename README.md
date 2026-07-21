@@ -41,7 +41,7 @@ Under the hood it's rigorously fair: exchange damage is exactly symmetric (no hi
 tilt toward the player), the referee only ever sees a neutral prompt (never your
 persona or the card's "unbeatable protagonist" framing), and the injected verdict is
 purely qualitative — it never leaks a die, a probability, or a stat to the
-storyteller. The whole engine is covered by 50 regression suites that freeze those
+storyteller. The whole engine is covered by 51 regression suites that freeze those
 fairness, stability, and no-spoiler guarantees; see the audit notes further down.
 
 ## How it works
@@ -123,6 +123,9 @@ Fully automatic. Manual controls:
   wouldn't trigger.
 - `/arbskip` (or **Skip next**) — skip the next check.
 - `/arbseed` — rebuild the capability sheet from the story.
+- `/mcname <name>` — set your character's **story name** when it differs from
+  your persona label (persona "LO" playing "Jovan Oda"); `/mcname clear` resets.
+  Usually unnecessary — seeding auto-detects it (see *Player identity* below).
 - `/duel <opponent>` / `/duelend` — open or close a duel manually.
 - `/battle allies | enemies` / `/battleend` — open or close a group battle.
 - `/arbthreads` — seed World Threads (background currents) from the story.
@@ -823,12 +826,32 @@ showing at a glance: active/disabled, which adjudicator profile is wired
 (amber warning when falling back to the raw API), mode · preset, and this
 chat's actor/thread counts.
 
+## Player identity — story name vs persona label
+
+SillyTavern's persona name is *who is typing*; the fiction may call your
+character something entirely different (persona "LO" playing "Jovan Oda" —
+zero shared name tokens, so no fuzzy matching can bridge them). Arbiter keeps
+a per-chat **story name** and uses it everywhere identity matters: the
+referee is told the story name is the player (and that your message label is
+the *same person*, never the opponent), duels/battles/wars name you by it,
+sheet lookups resolve **your real ratings** instead of falling to default-5,
+and injuries the referee files under either name land on the one true entry.
+
+You almost never set it by hand: **sheet seeding reads the story and learns
+it** (`player_story_name`), announces what it found, and never overwrites a
+name you set yourself. Override any time in **Manual controls → Your
+character** or with `/mcname`. When the story name is learned or set, any
+split entry created earlier (conditions on the label beside ratings on the
+story name) is folded into one automatically. Blank = persona name; chats
+where the two match behave exactly as before.
+
 ## Tests
 
-`tests/` contains nine suites covering every invariant: the probability
+`tests/` contains 51 suites covering every invariant: the probability
 curve, tier slicing per preset, exchange effects, full battles to
 conclusion, snapshot rewinds, event tiers, thread ladders, memory-collector
-coverage, and gate behavior. Run them with Node (no dependencies):
+coverage, gate behavior, and player identity (story name vs persona label).
+Run them with Node (no dependencies):
 `sh tests/run_all.sh`. Any future change should keep them green.
 
 ## Reset & inspection
