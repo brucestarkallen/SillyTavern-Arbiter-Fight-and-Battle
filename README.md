@@ -44,7 +44,7 @@ Under the hood it's rigorously fair: exchange damage is exactly symmetric (no hi
 tilt toward the player), the referee only ever sees a neutral prompt (never your
 persona or the card's "unbeatable protagonist" framing), and the injected verdict is
 purely qualitative — it never leaks a die, a probability, or a stat to the
-storyteller. The whole engine is covered by 54 regression suites that freeze those
+storyteller. The whole engine is covered by 55 regression suites that freeze those
 fairness, stability, and no-spoiler guarantees; see the audit notes further down.
 
 ## How it works
@@ -861,6 +861,22 @@ TRADE = "both land real hits — mutual damage", SETBACK = "fails, but
 forward — the loss opens a real next move", and so on. A bare tier name is
 never a mystery.
 
+## Where the directive enters the prompt — inject depth & role
+
+**Advanced → Inject depth / Inject role** controls exactly where Arbiter's
+binding note lands. **Depth 0** injects it into the chat **immediately
+after your latest message** — and before post-history instruction blocks,
+which SillyTavern appends after the chat (so with two post-history
+instructions, the order is: your message → Arbiter's directive → your
+post-history blocks). Depth N places it N messages earlier in the history
+(1 = just above your latest message). Role sets which speaker the note
+claims to be; blocks that land at the same depth group by role.
+
+Changing either knob re-places the **currently injected** directive and
+world beat instantly — you can watch it move in the prompt inspector
+without sending anything. Values are clamped and garbage-safe (an empty
+field means depth 0, never a broken injection).
+
 ## Established defenses — guards and counter-paths
 
 When your character maintains a stated defense — an untouchable barrier
@@ -936,13 +952,14 @@ where the two match behave exactly as before.
 
 ## Tests
 
-`tests/` contains 54 suites covering every invariant: the probability
+`tests/` contains 55 suites covering every invariant: the probability
 curve, tier slicing per preset, exchange effects, full battles to
 conclusion, snapshot rewinds, event tiers, thread ladders, memory-collector
 coverage, gate behavior, player identity (story name vs persona label),
 the outcome-only fight style (verdicts without health or an engine-called
 end), fight-or-not intelligence (declarations arm, attempts roll), and
-established-defense guards (verdicts scoped by the fiction's own rules).
+established-defense guards (verdicts scoped by the fiction's own rules),
+and injection placement (depth/role honored exactly, re-applied live).
 Run them with Node (no dependencies):
 `sh tests/run_all.sh`. Any future change should keep them green.
 

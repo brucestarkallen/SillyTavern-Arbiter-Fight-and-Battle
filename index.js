@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.34.0';
+    const VERSION = '0.35.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
     // Committed-turn history depth: how many resolved player turns keep a
@@ -446,7 +446,7 @@
         wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick,
         resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, buildDuelDirective, buildDuelSequenceDirective, buildDirective,
         startBattle, resolveBattleRound, buildBattleDirective, startWar, resolveWarRound, buildWarDirective, normalizeBattleAdj, normalizeWarAdj, normalizeAdj, startDuel,
-        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, applyConditionChange, liveCombatant, refreshLiveRating, mcName, mcAliases, isMcAlias, samePersonName, reconcilePlayerEntries, seedSheet, combatDomain, buildArmedDirective, guardLines, restoreSnapshot, deepCopy, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
+        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, applyConditionChange, liveCombatant, refreshLiveRating, mcName, mcAliases, isMcAlias, samePersonName, reconcilePlayerEntries, seedSheet, combatDomain, buildArmedDirective, guardLines, setInjection, setEventInjection, reapplyInjections, restoreSnapshot, deepCopy, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -2940,6 +2940,18 @@
         }
     }
 
+    /** Re-place the currently committed directive (and any event beat) at the
+     *  freshly chosen depth/role, so changing the Advanced injection settings
+     *  takes effect IMMEDIATELY on the live prompt — not on the next
+     *  adjudication. Without this the knob looks dead while experimenting. */
+    function reapplyInjections() {
+        try {
+            const meta = getMeta();
+            if (meta && meta.cache && meta.cache.directive) setInjection(meta.cache.directive);
+            if (meta && meta.eventCache && meta.eventCache.text) setEventInjection(meta.eventCache.text);
+        } catch (e) { /* settings must never break */ }
+    }
+
     function clearInjection() {
         setInjection('');
         setEventInjection('');
@@ -4036,7 +4048,7 @@
             <option value="assistant">assistant</option>
           </select>
         </div>
-        <div class="arb_hint">Where the binding note enters the prompt. Depth 0 + system = bottom of context, strongest adherence. Leave as-is unless you know why.</div>
+        <div class="arb_hint">Where the binding note enters the prompt. <b>Depth 0</b> = injected into the chat <b>immediately AFTER your latest message</b> — and before post-history instruction blocks that are appended after the chat. Depth N = N messages earlier in the history (1 = just above your latest message). Role sets which speaker the note claims to be; blocks landing at the same depth group by role. Changes apply to the CURRENT directive instantly — send nothing, just watch the prompt. Depth 0 + system = strongest adherence.</div>
         <div class="arb_row">
           <label>Force tag</label><input id="arb_forcetag" type="text" class="text_pole arb_num">
           <label>Skip tag</label><input id="arb_skiptag" type="text" class="text_pole arb_num">
@@ -4427,8 +4439,8 @@
         $('#arb_adjctxk').val(s.adjContextK).on('input', function () { s.adjContextK = clamp(this.value, 4, 500); saveSettings(); });
         $('#arb_sens').val(s.sensitivity).on('change', function () { s.sensitivity = this.value; saveSettings(); });
         $('#arb_defrating').val(s.defaultRating).on('input', function () { s.defaultRating = clamp(this.value, 0, 10); saveSettings(); });
-        $('#arb_depth').val(s.injectDepth).on('input', function () { s.injectDepth = clamp(this.value, 0, 99); saveSettings(); });
-        $('#arb_role').val(s.injectRole).on('change', function () { s.injectRole = this.value; saveSettings(); });
+        $('#arb_depth').val(s.injectDepth).on('input', function () { s.injectDepth = clamp(this.value, 0, 99); saveSettings(); reapplyInjections(); });
+        $('#arb_role').val(s.injectRole).on('change', function () { s.injectRole = (this.value === 'user' || this.value === 'assistant') ? this.value : 'system'; saveSettings(); reapplyInjections(); });
         $('#arb_forcetag').val(s.forceTag).on('input', function () { s.forceTag = this.value; saveSettings(); });
         $('#arb_skiptag').val(s.skipTag).on('input', function () { s.skipTag = this.value; saveSettings(); });
         $('#arb_verbs').val(s.verbs).on('change', function () { s.verbs = this.value; saveSettings(); });
