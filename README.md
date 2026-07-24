@@ -44,7 +44,7 @@ Under the hood it's rigorously fair: exchange damage is exactly symmetric (no hi
 tilt toward the player), the referee only ever sees a neutral prompt (never your
 persona or the card's "unbeatable protagonist" framing), and the injected verdict is
 purely qualitative — it never leaks a die, a probability, or a stat to the
-storyteller. The whole engine is covered by 55 regression suites that freeze those
+storyteller. The whole engine is covered by 56 regression suites that freeze those
 fairness, stability, and no-spoiler guarantees; see the audit notes further down.
 
 ## How it works
@@ -856,7 +856,9 @@ pressing foe by monologuing. But a mutual standoff — both circling,
 talking, measuring, nobody committing — is a lull: no roll, no round.
 
 Every verdict also carries a plain meaning now, in the log and the result
-toasts: SUCCESS WITH COST = "succeeds, but with a proportionate cost",
+toasts (as a single plain-text line — toasts never contain markup, so they
+render identically whether your SillyTavern build escapes toast HTML or
+not): SUCCESS WITH COST = "succeeds, but with a proportionate cost",
 TRADE = "both land real hits — mutual damage", SETBACK = "fails, but
 forward — the loss opens a real next move", and so on. A bare tier name is
 never a mystery.
@@ -952,7 +954,7 @@ where the two match behave exactly as before.
 
 ## Tests
 
-`tests/` contains 55 suites covering every invariant: the probability
+`tests/` contains 56 suites covering every invariant (including that every toast is plain text — no markup, no double-escaping, in any SillyTavern build): the probability
 curve, tier slicing per preset, exchange effects, full battles to
 conclusion, snapshot rewinds, event tiers, thread ladders, memory-collector
 coverage, gate behavior, player identity (story name vs persona label),

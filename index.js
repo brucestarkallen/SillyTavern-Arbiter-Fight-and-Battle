@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.35.0';
+    const VERSION = '0.35.1';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
     // Committed-turn history depth: how many resolved player turns keep a
@@ -95,9 +95,18 @@
         console.warn(LOG, ...args);
     }
 
+    /** The ONE gate for toast text. SillyTavern configures toastr with HTML
+     *  escaping ON, so any markup we send ("<br><small>") prints literally as
+     *  tags; other builds leave escaping OFF, where raw text could render as
+     *  HTML. Both hazards die here: toast bodies and titles are PLAIN TEXT —
+     *  angle brackets are swapped for guillemets so nothing can ever render
+     *  as markup or show as tag soup, and we request escaping explicitly for
+     *  builds that honor per-call options. Call sites must NEVER pre-escape
+     *  (double-escaping shows &amp;) or embed tags. */
     function toast(kind, msg, title) {
         try {
-            if (typeof toastr !== 'undefined' && toastr[kind]) toastr[kind](msg, title || 'Arbiter');
+            const plain = (x) => String(x == null ? '' : x).replace(/</g, '\u2039').replace(/>/g, '\u203a');
+            if (typeof toastr !== 'undefined' && toastr[kind]) toastr[kind](plain(msg), plain(title || 'Arbiter'), { escapeHtml: true });
         } catch (e) { /* no toastr */ }
     }
 
@@ -446,7 +455,7 @@
         wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick,
         resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, buildDuelDirective, buildDuelSequenceDirective, buildDirective,
         startBattle, resolveBattleRound, buildBattleDirective, startWar, resolveWarRound, buildWarDirective, normalizeBattleAdj, normalizeWarAdj, normalizeAdj, startDuel,
-        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, applyConditionChange, liveCombatant, refreshLiveRating, mcName, mcAliases, isMcAlias, samePersonName, reconcilePlayerEntries, seedSheet, combatDomain, buildArmedDirective, guardLines, setInjection, setEventInjection, reapplyInjections, restoreSnapshot, deepCopy, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
+        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, applyConditionChange, liveCombatant, refreshLiveRating, mcName, mcAliases, isMcAlias, samePersonName, reconcilePlayerEntries, seedSheet, combatDomain, buildArmedDirective, guardLines, setInjection, setEventInjection, reapplyInjections, toast, restoreSnapshot, deepCopy, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -3271,7 +3280,7 @@
                 if (!s.toastResults) return;
                 const t = TIERS[res.tier] || {};
                 const rnd = inBattle ? meta.battle.round : (meta.duel ? meta.duel.round : 0);
-                toast('info', escHtml(adjAction) + '<br><small>' + escHtml(TIER_MEANING[res.tier] || t.text || '') + '</small>' + (s.showMath ? '<br><small>' + escHtml('Δ=' + (res.delta >= 0 ? '+' : '') + res.delta + ' → P ' + Math.round(res.P * 100) + '% → u ' + (Math.round(res.u * 1000) / 1000)) + '</small>' : ''), 'R' + rnd + ' · ' + t.name);
+                toast('info', adjAction + ' — ' + (TIER_MEANING[res.tier] || t.text || '') + (s.showMath ? ' · Δ=' + (res.delta >= 0 ? '+' : '') + res.delta + ' → P ' + Math.round(res.P * 100) + '% → u ' + (Math.round(res.u * 1000) / 1000) : ''), 'R' + rnd + ' · ' + t.name);
             };
 
             // ── FAST MODE: zero LLM calls, pre-rolled outcomes ──
@@ -3489,7 +3498,7 @@
                     setInjection(directive);
                     commitCache(directive, 'ARMED');
                     saveMeta(); renderHud();
-                    toast('info', escHtml(meta.duel.player.name + ' vs ' + meta.duel.opp.name + ' — squared up, nothing rolled. The first real attempt is round 1.'), 'DUEL JOINED');
+                    toast('info', meta.duel.player.name + ' vs ' + meta.duel.opp.name + ' — squared up, nothing rolled. The first real attempt is round 1.', 'DUEL JOINED');
                     return;
                 }
                 if (adj.battle_start && s.autoBattle) {
@@ -3499,7 +3508,7 @@
                         setInjection(directive);
                         commitCache(directive, 'ARMED');
                         saveMeta(); renderHud();
-                        toast('info', escHtml(standing(meta.battle.allies).length + ' vs ' + standing(meta.battle.enemies).length + ' — battle joined, nothing rolled.'), 'BATTLE JOINED');
+                        toast('info', standing(meta.battle.allies).length + ' vs ' + standing(meta.battle.enemies).length + ' — battle joined, nothing rolled.', 'BATTLE JOINED');
                         return;
                     }
                 }
@@ -3510,7 +3519,7 @@
                         setInjection(directive);
                         commitCache(directive, 'ARMED');
                         saveMeta(); renderHud();
-                        toast('info', escHtml(standing(nonPlayer(meta.battle.allies)).length + ' formations vs ' + standing(meta.battle.enemies).length + ' — war joined, nothing rolled.'), 'WAR JOINED');
+                        toast('info', standing(nonPlayer(meta.battle.allies)).length + ' formations vs ' + standing(meta.battle.enemies).length + ' — war joined, nothing rolled.', 'WAR JOINED');
                         return;
                     }
                 }
@@ -3536,7 +3545,7 @@
                 commitCache(directive, res.tier);
                 pushLog(meta, adj, res, meta.duel.round);
                 saveMeta(); renderHud(); renderLog();
-                toast('info', escHtml(meta.duel.player.name + ' vs ' + meta.duel.opp.name), 'DUEL — R1 · ' + (TIERS[res.tier] || {}).name);
+                toast('info', meta.duel.player.name + ' vs ' + meta.duel.opp.name, 'DUEL — R1 · ' + (TIERS[res.tier] || {}).name);
                 return;
             }
 
@@ -3551,7 +3560,7 @@
                     commitCache(directive, out.mcRes ? out.mcRes.tier : null);
                     if (out.mcRes) pushLog(meta, adj, out.mcRes, meta.battle.round);
                     saveMeta(); renderHud(); renderLog();
-                    toast('info', escHtml(standing(meta.battle.allies).length + ' vs ' + standing(meta.battle.enemies).length), 'BATTLE — R1');
+                    toast('info', standing(meta.battle.allies).length + ' vs ' + standing(meta.battle.enemies).length, 'BATTLE — R1');
                     return;
                 }
             }
@@ -3566,7 +3575,7 @@
                     commitCache(directive, out.focalRes ? out.focalRes.tier : null);
                     if (out.focalRes) pushLog(meta, adj, out.focalRes, meta.battle.round);
                     saveMeta(); renderHud(); renderLog();
-                    toast('info', escHtml(standing(nonPlayer(meta.battle.allies)).length + ' formations vs ' + standing(meta.battle.enemies).length), 'WAR — R1');
+                    toast('info', standing(nonPlayer(meta.battle.allies)).length + ' formations vs ' + standing(meta.battle.enemies).length, 'WAR — R1');
                     return;
                 }
             }
@@ -3601,7 +3610,7 @@
                 commitCache(directive, res.tier);
                 pushLog(meta, adj, res);
                 saveMeta();
-                if (s.toastResults) toast('info', escHtml(adj.action), 'War · ' + t.name);
+                if (s.toastResults) toast('info', adj.action, 'War · ' + t.name);
                 renderLog();
                 return;
             }
@@ -3619,7 +3628,7 @@
             dlog('resolved in', Date.now() - t0, 'ms:', mathLine(line), '→', res.tier);
             if (s.toastResults) {
                 const t = TIERS[res.tier];
-                toast('info', escHtml(adj.action) + '<br><small>' + escHtml(TIER_MEANING[res.tier] || t.text || '') + '</small>' + (s.showMath ? '<br><small>' + escHtml(mathLine(line)) + '</small>' : ''), t.name);
+                toast('info', adj.action + ' — ' + (TIER_MEANING[res.tier] || t.text || '') + (s.showMath ? ' · ' + mathLine(line) : ''), t.name);
             }
             renderLog();
         } finally {
