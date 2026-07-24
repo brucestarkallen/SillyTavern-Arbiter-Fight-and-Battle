@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.35.1';
+    const VERSION = '0.36.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
     // Committed-turn history depth: how many resolved player turns keep a
@@ -455,7 +455,7 @@
         wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick,
         resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, buildDuelDirective, buildDuelSequenceDirective, buildDirective,
         startBattle, resolveBattleRound, buildBattleDirective, startWar, resolveWarRound, buildWarDirective, normalizeBattleAdj, normalizeWarAdj, normalizeAdj, startDuel,
-        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, applyConditionChange, liveCombatant, refreshLiveRating, mcName, mcAliases, isMcAlias, samePersonName, reconcilePlayerEntries, seedSheet, combatDomain, buildArmedDirective, guardLines, setInjection, setEventInjection, reapplyInjections, toast, restoreSnapshot, deepCopy, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
+        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, applyConditionChange, liveCombatant, refreshLiveRating, mcName, mcAliases, isMcAlias, samePersonName, reconcilePlayerEntries, seedSheet, combatDomain, buildArmedDirective, guardLines, setInjection, setEventInjection, reapplyInjections, toast, mathLine, restoreSnapshot, deepCopy, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -925,7 +925,8 @@
     // can drift on their semantics.
     const GUARD_FIELD = '"player_guard": null | "<an ACTIVE protection the player is MAINTAINING this beat, per the ESTABLISHED fiction — a total or partial defense the story has already defined (an untouchable barrier, a ward, intangibility, a shield-art, armor of the world\'s own rules). State it as a CONSTRAINT, e.g. Infinity holds: nothing physical reaches his body; only the sword\'s veil is lowered. Null when no such stated defense is up.>"';
     const COUNTER_FIELD = '"counter_path": null | "<set ONLY with player_guard: the ONE honest way the opponent can still harm or truly pressure the player THIS beat despite that guard, rooted in the established fiction — e.g. the exposed blade can be seized; the ground under him can be shattered; the veil must widen the instant he commits, and that instant can be struck; he can be forced off the ledge; his output can be outlasted. If the guard genuinely forecloses every path this beat, use null — do NOT invent one to seem fair.>"';
-    const GUARD_RULE = '- player_guard / counter_path: read the ESTABLISHED fiction, not genre habit. When a maintained guard forecloses direct harm and you find NO honest counter_path, the opponent cannot land contact this beat — a bad result then means the player\'s OWN attempt failing (read, evaded, stopped), ground or tempo lost, or the guard strained, never an impossible touch. A real counter_path both licenses the opponent\'s side of the outcome AND is exactly what the narration must name. A guard the opponent has no answer to is also strong POSITIVE circumstance for the player\'s safety — though their own attack through or around it can still fail on its merits.';
+    const GUARD_RULE = '- player_guard / counter_path: read the ESTABLISHED fiction, not genre habit. When a maintained guard forecloses direct harm and you find NO honest counter_path, the opponent cannot land contact this beat — a bad result then means the player\'s OWN attempt failing (read, evaded, stopped), ground or tempo lost, or the guard strained, never an impossible touch. A real counter_path both licenses the opponent\'s side of the outcome AND is exactly what the narration must name. A guard the opponent has no answer to is also strong POSITIVE circumstance for the player\'s safety — though their own attack through or around it can still fail on its merits. A standing, always-on defense the fiction has established (an ambient barrier, a permanent ward) REMAINS player_guard even while the player ATTACKS — set it every beat until the fiction shows it dropped, spent, or bypassed; attacking does not un-happen a maintained veil.';
+    const COND_RECONCILE_RULE = '- Lasting damage MUST be registered, never merely narrated: if the recent fiction shows EITHER fighter carrying an UNREGISTERED persistent state — impaled, a maimed or unusable limb, heavy blood loss, pinned under wreckage, poisoned, disarmed — file condition_change for it NOW as a catch-up, even if it arose in an earlier beat and even if you did not file it then. A registered wound lowers that fighter\'s effective rating EVERY round and compounds; an unregistered one does nothing, leaving a half-dead foe fighting at pristine strength. NEVER pour lasting damage into circumstance instead: circumstance is ONLY what is transient about THIS beat (striking mid-recovery, footing, tempo) beyond what registered conditions already cover — re-awarding a registered wound as circumstance double-counts it, and substituting circumstance for filing it makes the wound vanish next round.';
 
     const ADJ_SYSTEM = [
         'You are Arbiter, an outcome adjudicator for a roleplay. Decide whether the player\'s latest action needs a resolution check, and if so, classify it. You NEVER decide success or failure — only the parameters. Output STRICT JSON only: one object, no markdown, no commentary.',
@@ -964,6 +965,7 @@
         '- The opponent is NEVER the player. Do NOT use the player\'s name, or ANY part of it (their given name OR their family name/surname), as the opponent (in "opposition" or "duel_start"). The <player> block names the player; EVERY part of that name is the player. For example, if the player is "Alex Vance", then BOTH "Alex" and "Vance" are the player — the opponent is never either. Name the opponent by the opponent\'s OWN name as the scene uses it (their given name is fine); if you cannot find a name distinct from the player\'s, the action is probably a single check, not a duel.',
         '- opposition must be a PERSON or creature the player fights. Never use a place, academy, house, faction, or organization name as the opposition.',
         GUARD_RULE,
+        COND_RECONCILE_RULE,
     ].join('\n');
 
     // Arbiter's own injected directives can surface as messages in some setups;
@@ -1276,6 +1278,7 @@
         '- exchange=false ONLY when no side fights this beat: a standoff or parley, talk or readying before contact, out-of-character/directorial text, or a recap of what already happened. While the enemy presses, a passive turn is still a round.',
         '- circumstance rewards concrete tactics, terrain, exploited weaknesses (+); penalizes impairment, bad position, chaos (-). 0 if nothing notable.',
         GUARD_RULE,
+        COND_RECONCILE_RULE,
         '- combat_ended=true ONLY if the fiction has already clearly ended the battle (rout, surrender, separation, scene left combat).',
     ].join('\n');
 
@@ -1586,6 +1589,7 @@
         '- circumstance is the tactical soundness of THIS order given terrain, intel, enemy posture, timing, and prior conditions: a flank against an exposed side +2; a frontal charge uphill into prepared lines -2; 0 when unremarkable.',
         '- While the engagement is being fought, nearly every commander turn IS an order; hesitation is a maneuver at negative circumstance. exchange=false only when no side presses this beat: a parley or truce, night camp, out-of-character/directorial text, or a recap of what already happened.',
         GUARD_RULE,
+        COND_RECONCILE_RULE,
         '- combat_ended=true ONLY if the fiction has clearly ended the engagement (rout already narrated, surrender, retreat completed, relief arrived).',
     ].join('\n');
 
@@ -2271,6 +2275,7 @@
         '- circumstance rewards concrete tactics, exploited weaknesses and openings (+); penalizes recklessness noted in the fiction, bad footing, impairment (-). 0 if nothing notable.',
         '- circumstance is TWO-SIDED and impartial: weigh what the OPPONENT is doing as much as the player. If the opponent has the better position, has set a trap, is pressing an advantage, or is simply the more dangerous fighter seizing control of the exchange, that is NEGATIVE circumstance for the player even when the player\'s own move is sound. Do not grade only the player\'s cleverness upward; a good move into a worse position still nets negative. Judge the exchange as a neutral observer would, not from the player\'s hopes.',
         GUARD_RULE,
+        COND_RECONCILE_RULE,
         '- combat_ended=true ONLY if the fiction has already clearly ended the fight (someone fled, yielded, was separated, or the scene left combat).',
         '- sequence: fill this ONLY when the player\'s single message is a genuine CHAIN of 2+ distinct offensive sub-actions meant to land in order (a combo — e.g. disrupt his spell, THEN a groin kick, THEN an elbow, THEN a neck punch). List each sub-action as its own strike with its own circumstance, judged on its OWN footing given what came before AND the opponent reacting between strikes. A combo is HIGH-RISK: do not assume every strike lands; a late strike is only as good as the setup that survived to it, and a bad strike hands the opponent the initiative. 2-5 strikes. Leave null for a single action — never invent a combo the player did not write, and still fill "action"/"circumstance" for the move as a whole.',
     ].join('\n');
@@ -2987,6 +2992,8 @@
             u: Math.round(res.u * 1000) / 1000,
             guard: adj.playerGuard || undefined,
             path: adj.counterPath || undefined,
+            pBase: adj.pBase, pInj: adj.pInj || undefined,
+            oBase: adj.oBase, oInj: adj.oInj || undefined,
             tier: res.tier,
         };
         meta.log.unshift(line);
@@ -2996,7 +3003,11 @@
 
     function mathLine(l) {
         const sign = l.circ >= 0 ? '+' : '';
-        return 'Δ=' + (l.delta >= 0 ? '+' : '') + l.delta + ' (' + l.aR + ' vs ' + l.oR +
+        // Registered wounds are AUDITABLE: a wounded side shows base−wounds=eff
+        // ("10−2=8"), so a foe still printing a pristine "10" is the visible
+        // signal that narrated damage was never filed as a condition.
+        const side = (eff, base, inj) => (inj && Number.isFinite(Number(base))) ? (base + '−' + inj + '=' + eff) : String(eff);
+        return 'Δ=' + (l.delta >= 0 ? '+' : '') + l.delta + ' (' + side(l.aR, l.pBase, l.pInj) + ' vs ' + side(l.oR, l.oBase, l.oInj) +
             ', circ ' + sign + l.circ + ') → P ' + l.P + '% → u ' + l.u;
     }
 
@@ -3477,7 +3488,7 @@
                 const directive = res.combo ? buildDuelSequenceDirective(meta, adj, res) : buildDuelDirective(meta, adj, res);
                 setInjection(directive);
                 commitCache(directive, res.tier);
-                pushLog(meta, { action: adj.action, domain: meta.duel.domain, actor: meta.duel.player.name, circumstance: adj.circumstance, why: adj.why, playerGuard: adj.playerGuard, counterPath: adj.counterPath }, res, meta.duel.round);
+                pushLog(meta, { action: adj.action, domain: meta.duel.domain, actor: meta.duel.player.name, circumstance: adj.circumstance, why: adj.why, playerGuard: adj.playerGuard, counterPath: adj.counterPath, pBase: meta.duel.player.rating, pInj: meta.duel.player.injuries, oBase: meta.duel.opp.rating, oInj: meta.duel.opp.injuries }, res, meta.duel.round);
                 saveMeta(); renderHud(); renderLog();
                 dlog('duel round', meta.duel.round, 'resolved in', Date.now() - t0, 'ms →', res.tier);
                 duelToast(adj.action, res);

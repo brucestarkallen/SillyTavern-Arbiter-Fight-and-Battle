@@ -44,7 +44,7 @@ Under the hood it's rigorously fair: exchange damage is exactly symmetric (no hi
 tilt toward the player), the referee only ever sees a neutral prompt (never your
 persona or the card's "unbeatable protagonist" framing), and the injected verdict is
 purely qualitative — it never leaks a die, a probability, or a stat to the
-storyteller. The whole engine is covered by 56 regression suites that freeze those
+storyteller. The whole engine is covered by 57 regression suites that freeze those
 fairness, stability, and no-spoiler guarantees; see the audit notes further down.
 
 ## How it works
@@ -879,6 +879,26 @@ world beat instantly — you can watch it move in the prompt inspector
 without sending anything. Values are clamped and garbage-safe (an empty
 field means depth 0, never a broken injection).
 
+## Wounds must register — and the math shows it
+
+Narrated damage is not damage until it is **filed**. All four referees now
+carry a catch-up duty: if the recent fiction shows either fighter with an
+unregistered persistent state — impaled, a maimed limb, heavy blood loss,
+pinned, poisoned, disarmed — the referee must file it as a condition NOW,
+even if it arose beats ago. A registered wound lowers that fighter's
+effective rating **every round** and compounds; an unregistered one does
+nothing, leaving a half-dead foe fighting at pristine strength. Lasting
+damage may **never** be poured into circumstance instead (that both
+double-counts registered wounds and makes unfiled ones vanish next
+round) — circumstance is only what is transient about *this* beat.
+
+The duel log makes this auditable: a wounded side prints
+**base−wounds=eff** ("10−3=7"), so a foe who keeps printing a pristine
+"10" while the prose says he's impaled is the visible signal that damage
+was never registered — and the standing-guard rule now also keeps an
+always-on defense (an ambient barrier) set as your ⛨ guard **even while
+you attack**, until the fiction shows it dropped or bypassed.
+
 ## Established defenses — guards and counter-paths
 
 When your character maintains a stated defense — an untouchable barrier
@@ -954,7 +974,7 @@ where the two match behave exactly as before.
 
 ## Tests
 
-`tests/` contains 56 suites covering every invariant (including that every toast is plain text — no markup, no double-escaping, in any SillyTavern build): the probability
+`tests/` contains 57 suites covering every invariant (including that every toast is plain text — no markup, no double-escaping, in any SillyTavern build): the probability
 curve, tier slicing per preset, exchange effects, full battles to
 conclusion, snapshot rewinds, event tiers, thread ladders, memory-collector
 coverage, gate behavior, player identity (story name vs persona label),
