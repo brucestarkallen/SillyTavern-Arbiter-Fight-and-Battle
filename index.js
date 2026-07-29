@@ -116,6 +116,17 @@
         return Math.min(hi, Math.max(lo, n));
     }
 
+    /** Numeric-or-null for optional referee fields. null/undefined/'' stay
+     *  null ("not provided"); genuinely numeric strings coerce; anything else
+     *  ("high", "???") is null too — NEVER 0. clamp() returns its lower bound
+     *  on NaN, so a junk opponent_rating used to rate a foe 0 (free wins)
+     *  instead of falling back to the trained default. */
+    function numOrNull(v) {
+        if (v === null || v === undefined || v === '') return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+    }
+
     function escHtml(s) {
         return String(s ?? '').replace(/[&<>"']/g, m => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -1039,7 +1050,7 @@
             const ws = normalizeWarStart(obj.war_start);
             if (ws) out.war_start = ws;
             out.domain = String(obj.domain || 'melee').toLowerCase().trim() || 'melee';
-            out.opponent_rating = (obj.opponent_rating === null || obj.opponent_rating === undefined) ? null : clamp(Math.round(Number(obj.opponent_rating)), 0, 10);
+            out.opponent_rating = numOrNull(obj.opponent_rating) === null ? null : clamp(Math.round(numOrNull(obj.opponent_rating)), 0, 10);
             out.scale_mismatch = (obj.scale_mismatch === null || obj.scale_mismatch === undefined) ? 0 : clamp(Math.round(Number(obj.scale_mismatch)), -4, 4);
             out.action = String(obj.action || 'squaring up').slice(0, 140);
             out.actor = mcName(meta);
@@ -1127,7 +1138,7 @@
             duel_start: duelStart,
             battle_start: battleStart,
             war_start: normalizeWarStart(obj.war_start),
-            opponent_rating: (obj.opponent_rating === null || obj.opponent_rating === undefined) ? null : clamp(Math.round(Number(obj.opponent_rating)), 0, 10),
+            opponent_rating: (numOrNull(obj.opponent_rating) === null) ? null : clamp(Math.round(numOrNull(obj.opponent_rating)), 0, 10),
             condition_change: normalizeConditionChange(obj.condition_change),
             composure_change: (obj.composure_change === null || obj.composure_change === undefined) ? 0 : clamp(Math.round(Number(obj.composure_change)), -3, 3),
             playerGuard: (typeof obj.player_guard === 'string' && obj.player_guard.trim()) ? obj.player_guard.trim().slice(0, 180) : null,
@@ -1189,7 +1200,8 @@
     function applyConditionChange(meta, cc) {
         if (!cc) return null;
         const playerName = mcName(meta);
-        const name = (/^(you|player|me|myself)$/i.test(cc.who) || isMcAlias(meta, cc.who)) ? playerName : cc.who;
+        const name = (/^(you|player|me|myself)$/i.test(cc.who) || isMcAlias(meta, cc.who)) ? playerName : safeKey(cc.who);
+        if (!name) return null; // a magic key (__proto__ et al.) must never become an actor entry
         meta.sheet = meta.sheet || { actors: {} };
         let entry = findActor(meta, name);
         if (!entry) {
@@ -3741,8 +3753,9 @@
         }
         let added = 0;
         for (const [name, entry] of Object.entries(obj.actors)) {
-            if (!name.trim() || !entry || typeof entry !== 'object') continue;
-            const key = name.trim();
+            if (!entry || typeof entry !== 'object') continue;
+            const key = safeKey(name); // rejects empties and magic keys (__proto__ et al.)
+            if (!key) continue;
             // IDENTITY match, not the loose duel-time matcher: a seeded sibling
             // ("Marcus Wessex") must never merge into or replace "Claire Wessex"
             // just because they share a surname.
@@ -4596,6 +4609,9 @@
             try {
                 const obj = JSON.parse(String($('#arb_sheet').val() || '{}'));
                 if (!obj.actors || typeof obj.actors !== 'object') throw new Error('missing "actors" object');
+                for (const k of Object.keys(obj.actors)) {
+                    if (!safeKey(k)) throw new Error('unsafe actor name: "' + k + '" (reserved key)');
+                }
                 meta.sheet = obj;
                 getMeta(); // re-normalize
                 saveMeta();
