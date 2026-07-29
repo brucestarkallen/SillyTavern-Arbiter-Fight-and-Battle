@@ -3151,6 +3151,11 @@
         const stale = () => epoch !== chatEpoch;
 
         const genType = type || 'normal';
+        // 'continue' stays eligible by deliberate design: it replays the
+        // COMMITTED directive (cache hit, never a re-roll) into the text being
+        // continued, so the storyteller cannot "write around" a binding
+        // verdict mid-reply. It is the same deterministic text the original
+        // generation saw — fate stays binding, nothing double-applies state.
         const eligible = ['normal', 'swipe', 'regenerate', 'continue'];
         if (!eligible.includes(genType)) return; // quiet / impersonate / etc.
 
@@ -3761,8 +3766,13 @@
         }
     }
 
+    // Set when the interceptor first fires; a completed generation without it
+    // means this ST build predates manifest generate_interceptor support.
+    let interceptorRan = false;
+
     // Assigned at load so ST can find it whenever generation starts.
     globalThis.arbiterInterceptor = async function (chat, contextSize, abort, type) {
+        interceptorRan = true;
         try {
             await interceptorBody(chat, contextSize, abort, type);
         } catch (e) {
@@ -4883,12 +4893,27 @@
     /* Init                                                                */
     /* ------------------------------------------------------------------ */
 
+    let genEndedSeen = false;
+
     function initEvents() {
         const c = ctx();
         const es = c.eventSource;
         const et = c.event_types || {};
         if (!es || !es.on) { warn('eventSource unavailable'); return; }
-        if (et.GENERATION_ENDED) es.on(et.GENERATION_ENDED, () => { clearInjection(); maybeAutoSeed(); });
+        if (et.GENERATION_ENDED) es.on(et.GENERATION_ENDED, () => {
+            clearInjection(); maybeAutoSeed();
+            // One-time compat probe: GENERATION_ENDED fired but our
+            // generate_interceptor never ran → this SillyTavern predates
+            // manifest generate_interceptor support (added ~1.12.x) and
+            // Arbiter would otherwise be silently inert. Warn once.
+            if (!genEndedSeen) {
+                genEndedSeen = true;
+                if (!interceptorRan) {
+                    warn('GENERATION_ENDED fired without the generate_interceptor ever running — this SillyTavern build is too old (needs ≥ 1.12.x); Arbiter checks are INACTIVE.');
+                    toast('warning', 'This SillyTavern version does not support generation interceptors, so Arbiter\'s outcome checks are inactive. Please update SillyTavern (≥ 1.12).', 'Arbiter — incompatible ST version');
+                }
+            }
+        });
         if (et.GENERATION_STOPPED) es.on(et.GENERATION_STOPPED, () => clearInjection());
         if (et.CHAT_CHANGED) es.on(et.CHAT_CHANGED, () => {
             chatEpoch++; // any in-flight check/seed from the previous chat is now stale
