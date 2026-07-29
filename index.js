@@ -4295,14 +4295,37 @@
     const _actTimer = setInterval(() => { if (activity.busy) { try { renderActivity(); } catch (e) { } } }, 1000);
     if (_actTimer && typeof _actTimer.unref === 'function') _actTimer.unref();
 
+    /** Does a committed-turn history entry belong to a fight's lifetime? Two
+     *  markers: its pre-turn SNAPSHOT captured that fight live (snap.d/snap.b),
+     *  or its committed directive is one of the fight's own notes. Dropping
+     *  exactly these entries when a fight is dismissed keeps it
+     *  un-resurrectable (no surviving snapshot can restore it) WITHOUT nuking
+     *  unrelated rewind coverage for threads/engines/composure, which the old
+     *  blanket `m.history = []` destroyed. */
+    function fightHistoryFilter(kind) {
+        const isDuel = kind === 'duel';
+        const prefix = isDuel ? /^\s*\[ARBITER — duel/i : /^\s*\[ARBITER — (?:battle|war)/i;
+        return (h) => {
+            if (!h || typeof h !== 'object') return false;
+            if (h.snap && (isDuel ? h.snap.d : h.snap.b)) return true;
+            return typeof h.directive === 'string' && prefix.test(h.directive);
+        };
+    }
+
     function hudDismiss() {
         try {
             const m = getMeta();
             if (!m) return;
+            const kind = m.battle ? 'battle' : (m.duel ? 'duel' : null);
             if (m.battle) endBattle(m, false);
             else if (m.duel) endDuel(m, false);
             m.cache = null; // an ended fight can't be resurrected by a re-roll…
-            m.history = []; // …nor by a timeline prune-restore
+            if (kind && Array.isArray(m.history)) {
+                // …nor by a timeline prune-restore — but only THIS fight's
+                // entries go; unrelated turns keep their rewind coverage.
+                const drop = fightHistoryFilter(kind);
+                m.history = m.history.filter(h => !drop(h));
+            }
             saveMeta();
         } catch (e) { warn('HUD dismiss failed', e); }
     }
