@@ -1461,16 +1461,19 @@
             // to the storyteller — nothing here ticks or concludes.
             if (mv.kind === 'command') {
                 const oppLead = Math.max(3, ...standing(b.enemies).map(u => u.rating));
-                const delta = clamp(mc.rating - mc.injuries - oppLead + mv.circumstance + preset.bonus + mAll + composurePenalty(meta) + (b.scaleMismatch || 0), -13, 13);
+                const aR = mc.rating - mc.injuries;
+                const delta = clamp(aR - oppLead + mv.circumstance + preset.bonus + mAll + composurePenalty(meta) + (b.scaleMismatch || 0), -13, 13);
                 const P = probFromDelta(delta); const u = rngFloat();
-                mcRes = { delta, P, u, tier: sliceOutcome(P, u, preset.mods), command: true };
+                mcRes = { delta, P, u, tier: sliceOutcome(P, u, preset.mods), command: true, aR, oR: oppLead, oppLabel: 'the enemy line' };
             } else {
                 let target = standing(b.enemies).find(u => mv.target && u.name.toLowerCase() === mv.target.toLowerCase());
                 if (!target) target = standing(b.enemies).slice().sort((x, y) => y.rating - x.rating)[0];
                 if (target) {
-                    const delta = clamp((mc.rating - mc.injuries + mc.momentum) - (target.rating - target.injuries + target.momentum) + mv.circumstance + preset.bonus + mAll + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
+                    const aR = mc.rating - mc.injuries + mc.momentum;
+                    const oR = target.rating - target.injuries + target.momentum;
+                    const delta = clamp(aR - oR + mv.circumstance + preset.bonus + mAll + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                     const P = probFromDelta(delta); const u = rngFloat();
-                    mcRes = { delta, P, u, tier: tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand), command: false };
+                    mcRes = { delta, P, u, tier: tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand), command: false, aR, oR, oppLabel: target.name };
                 }
             }
             b.round += 1;
@@ -1480,26 +1483,29 @@
         if (mv.kind === 'command') {
             const oppLead = Math.max(3, ...standing(b.enemies).map(u => u.rating));
             const openingBonus = mc.opening ? 1 : 0; mc.opening = false;
-            const delta = clamp(mc.rating - mc.injuries + openingBonus - oppLead + mv.circumstance + preset.bonus + mAll + composurePenalty(meta) + (b.scaleMismatch || 0), -13, 13);
+            const aR = mc.rating - mc.injuries + openingBonus;
+            const delta = clamp(aR - oppLead + mv.circumstance + preset.bonus + mAll + composurePenalty(meta) + (b.scaleMismatch || 0), -13, 13);
             const P = probFromDelta(delta); const u = rngFloat();
             const tier = sliceOutcome(P, u, preset.mods);
             sideMod = ({ DECISIVE: 2, SUCCESS: 1, SUCCESS_COST: 1, SETBACK: -1, FAILURE: -1, DISASTER: -2 })[tier] || 0;
             if (tier === 'SUCCESS_COST' || tier === 'DISASTER') { mc.poise = Math.max(0, mc.poise - 0.5); if (mc.poise <= 0) mc.standing = false; }
-            mcRes = { delta, P, u, tier, command: true };
+            mcRes = { delta, P, u, tier, command: true, aR, oR: oppLead, oppLabel: 'the enemy line' };
         } else {
             let target = standing(b.enemies).find(u => mv.target && u.name.toLowerCase() === mv.target.toLowerCase());
             if (!target) target = standing(b.enemies).slice().sort((x, y) => y.rating - x.rating)[0];
             if (target) {
                 mcTargetName = target.name;
                 const openingBonus = mc.opening ? 1 : 0; mc.opening = false;
-                const delta = clamp((mc.rating - mc.injuries + mc.momentum + openingBonus) - (target.rating - target.injuries + target.momentum) + mv.circumstance + preset.bonus + mAll + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
+                const aR = mc.rating - mc.injuries + mc.momentum + openingBonus;
+                const oR = target.rating - target.injuries + target.momentum;
+                const delta = clamp(aR - oR + mv.circumstance + preset.bonus + mAll + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                 const P = probFromDelta(delta); const u = rngFloat();
                 const tier = tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand);
                 const r = applyExchangeEffects(mc, target, tier, delta);
                 Object.assign(mc, r.player); Object.assign(target, r.opp);
                 if (mc.poise <= 0) mc.standing = false;
                 if (target.poise <= 0) target.standing = false;
-                mcRes = { delta, P, u, tier, command: false };
+                mcRes = { delta, P, u, tier, command: false, aR, oR, oppLabel: target.name };
             }
         }
 
@@ -1743,21 +1749,25 @@
             if (mv.kind === 'stratagem') {
                 const delta = clamp(b.cmdA - b.cmdE + mv.circumstance + mAll + preset.bonus + composurePenalty(meta), -13, 13);
                 const P = probFromDelta(delta); const u = rngFloat();
-                focalRes = { delta, P, u, tier: sliceOutcome(P, u, preset.mods), stratagem: true };
+                focalRes = { delta, P, u, tier: sliceOutcome(P, u, preset.mods), stratagem: true, aR: b.cmdA, oR: b.cmdE, oppLabel: b.enemyCommander || 'enemy command' };
             } else if (mv.kind === 'personal' && mc) {
                 target = pickUnit(b.enemies, mv.target);
                 if (target) {
-                    const delta = clamp((mc.rating - mc.injuries + mc.momentum) - (target.rating - target.injuries + target.momentum) + mv.circumstance + F + mAll + preset.bonus + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
+                    const aR = mc.rating - mc.injuries + mc.momentum;
+                    const oR = target.rating - target.injuries + target.momentum;
+                    const delta = clamp(aR - oR + mv.circumstance + F + mAll + preset.bonus + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                     const P = probFromDelta(delta); const u = rngFloat();
-                    focalRes = { delta, P, u, tier: tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand), personal: true };
+                    focalRes = { delta, P, u, tier: tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand), personal: true, aR, oR, oppLabel: target.name };
                 }
             } else {
                 acting = pickUnit(nonPlayer(b.allies), mv.acting);
                 target = pickUnit(b.enemies, mv.target);
                 if (acting && target) {
-                    const delta = clamp((acting.rating - acting.injuries + acting.momentum + cmdEdge) - (target.rating - target.injuries + target.momentum) + mv.circumstance + F + mAll + preset.bonus + combatantComposurePenalty(acting) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
+                    const aR = acting.rating - acting.injuries + acting.momentum + cmdEdge;
+                    const oR = target.rating - target.injuries + target.momentum;
+                    const delta = clamp(aR - oR + mv.circumstance + F + mAll + preset.bonus + combatantComposurePenalty(acting) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                     const P = probFromDelta(delta); const u = rngFloat();
-                    focalRes = { delta, P, u, tier: tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand) };
+                    focalRes = { delta, P, u, tier: tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand), aR, oR, oppLabel: target.name };
                 }
             }
             b.round += 1;
@@ -1768,7 +1778,7 @@
             const delta = clamp(b.cmdA - b.cmdE + mv.circumstance + mAll + preset.bonus + composurePenalty(meta), -13, 13);
             const P = probFromDelta(delta); const u = rngFloat();
             const tier = sliceOutcome(P, u, preset.mods);
-            focalRes = { delta, P, u, tier, stratagem: true };
+            focalRes = { delta, P, u, tier, stratagem: true, aR: b.cmdA, oR: b.cmdE, oppLabel: b.enemyCommander || 'enemy command' };
             const fx = STRATAGEM_EFFECTS[tier] || {};
             if (fx.condMod > 0) {
                 b.conditions = b.conditions || [];
@@ -1786,28 +1796,32 @@
             target = pickUnit(b.enemies, mv.target);
             if (target) {
                 const openingBonus = mc.opening ? 1 : 0; mc.opening = false;
-                const delta = clamp((mc.rating - mc.injuries + mc.momentum + openingBonus) - (target.rating - target.injuries + target.momentum) + mv.circumstance + F + mAll + preset.bonus + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
+                const aR = mc.rating - mc.injuries + mc.momentum + openingBonus;
+                const oR = target.rating - target.injuries + target.momentum;
+                const delta = clamp(aR - oR + mv.circumstance + F + mAll + preset.bonus + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                 const P = probFromDelta(delta); const u = rngFloat();
                 const tier = tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand);
                 const r = applyExchangeEffects(mc, target, tier, delta);
                 Object.assign(mc, r.player); Object.assign(target, r.opp);
                 if (mc.poise <= 0) mc.standing = false;
                 if (target.poise <= 0) target.standing = false;
-                focalRes = { delta, P, u, tier, personal: true };
+                focalRes = { delta, P, u, tier, personal: true, aR, oR, oppLabel: target.name };
             }
         } else {
             acting = pickUnit(nonPlayer(b.allies), mv.acting);
             target = pickUnit(b.enemies, mv.target);
             if (acting && target) {
                 const openingBonus = acting.opening ? 1 : 0; acting.opening = false;
-                const delta = clamp((acting.rating - acting.injuries + acting.momentum + openingBonus + cmdEdge) - (target.rating - target.injuries + target.momentum) + mv.circumstance + F + mAll + preset.bonus + combatantComposurePenalty(acting) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
+                const aR = acting.rating - acting.injuries + acting.momentum + openingBonus + cmdEdge;
+                const oR = target.rating - target.injuries + target.momentum;
+                const delta = clamp(aR - oR + mv.circumstance + F + mAll + preset.bonus + combatantComposurePenalty(acting) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                 const P = probFromDelta(delta); const u = rngFloat();
                 const tier = tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand);
                 const r = applyExchangeEffects(acting, target, tier, delta);
                 Object.assign(acting, r.player); Object.assign(target, r.opp);
                 if (acting.poise <= 0) acting.standing = false;
                 if (target.poise <= 0) target.standing = false;
-                focalRes = { delta, P, u, tier };
+                focalRes = { delta, P, u, tier, aR, oR, oppLabel: target.name };
             }
         }
 
