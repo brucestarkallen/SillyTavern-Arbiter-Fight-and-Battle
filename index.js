@@ -466,7 +466,7 @@
         wiActivateEntries, collectWorldInfoBlock, wiResolveBooks, wiViaEngine, backgroundTick,
         resolveDuelSequence, resolveDuelExchange, normalizeDuelAdj, buildDuelDirective, buildDuelSequenceDirective, buildDirective,
         startBattle, resolveBattleRound, buildBattleDirective, startWar, resolveWarRound, buildWarDirective, normalizeBattleAdj, normalizeWarAdj, normalizeAdj, startDuel,
-        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, applyConditionChange, liveCombatant, refreshLiveRating, mcName, mcAliases, isMcAlias, samePersonName, reconcilePlayerEntries, seedSheet, combatDomain, buildArmedDirective, guardLines, setInjection, setEventInjection, reapplyInjections, toast, mathLine, restoreSnapshot, deepCopy, ratingFor, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
+        resolveDuelRecovery, resolveAdj, shiftCombatantComposure, findActor, findActorExact, findActorKey, findActorKeySamePerson, applyConditionChange, liveCombatant, refreshLiveRating, mcName, mcAliases, isMcAlias, samePersonName, reconcilePlayerEntries, seedSheet, combatDomain, buildArmedDirective, guardLines, setInjection, setEventInjection, reapplyInjections, toast, mathLine, restoreSnapshot, deepCopy, persistDuelEstimates, forgetActor, fightHistoryFilter, getDefaults: () => DEFAULTS, getLastAdj: () => LAST_ADJ,
     };
 
     /* ------------------------------------------------------------------ */
@@ -1381,7 +1381,8 @@
         const allies = buildUnits(meta, (allyNames || []).filter(n => !isMcAlias(meta, n)), d, false);
         const enemies = buildUnits(meta, enemyNames || [], d, true, oppEstimate);
         if (!enemies.length) return null;
-        meta.duel = null; // mode exclusivity — see startDuel
+        persistDuelEstimates(meta); // mode exclusivity (see startDuel) must not lose an estimated foe's baseline
+        meta.duel = null;
         meta.battle = {
             active: true, over: false, victor: null, mcDown: false, round: 0, domain: d,
             scaleMismatch: clamp(Math.round(Number(scaleMismatch) || 0), -4, 4),
@@ -1668,7 +1669,8 @@
         const allies = mkUnits((allyNames || []).filter(n => !isMcAlias(meta, n)), false);
         const enemies = mkUnits(enemyNames || [], true);
         if (!enemies.length) return null;
-        meta.duel = null; // mode exclusivity — see startDuel
+        persistDuelEstimates(meta); // mode exclusivity (see startDuel) must not lose an estimated foe's baseline
+        meta.duel = null;
         meta.battle = {
             kind: 'war', active: true, over: false, victor: null, mcDown: false, round: 0, domain: d,
             cmdA, cmdE, enemyCommander: enemyCommander || null,
@@ -2367,23 +2369,31 @@
         return meta.duel;
     }
 
+    /** Persist an estimated opponent's rating as a sheet baseline so the same
+     *  foe doesn't get re-estimated (and wobble) next encounter. Flagged
+     *  _estimated so a considered seed can still overwrite it. MUST be called
+     *  from EVERY duel-teardown path — an engine-declared victory cleared via
+     *  a bare `meta.duel = null` used to skip this, silently losing the
+     *  baseline on the most common duel ending. */
+    function persistDuelEstimates(meta) {
+        try {
+            const d = meta && meta.duel;
+            if (!d || !d.opp || !d.opp.estimated || !d.opp.name) return false;
+            if (findActor(meta, d.opp.name)) return false;
+            meta.sheet = meta.sheet || { actors: {} };
+            meta.sheet.actors[d.opp.name] = {
+                default: clamp(d.opp.rating, 0, 10),
+                domains: { [d.domain || 'melee']: clamp(d.opp.rating, 0, 10) },
+                _estimated: true,
+            };
+            dlog('persisted estimated opponent', d.opp.name, 'at', d.opp.rating, 'as sheet baseline');
+            return true;
+        } catch (e) { /* non-fatal */ return false; }
+    }
+
     function endDuel(meta, silent) {
         if (meta && meta.duel) {
-            // Persist an estimated opponent's rating as a sheet baseline so the
-            // same foe doesn't get re-estimated (and wobble) next encounter.
-            // Flagged _estimated so a considered seed can still overwrite it.
-            try {
-                const d = meta.duel;
-                if (d.opp && d.opp.estimated && d.opp.name && !findActor(meta, d.opp.name)) {
-                    meta.sheet = meta.sheet || { actors: {} };
-                    meta.sheet.actors[d.opp.name] = {
-                        default: clamp(d.opp.rating, 0, 10),
-                        domains: { [d.domain || 'melee']: clamp(d.opp.rating, 0, 10) },
-                        _estimated: true,
-                    };
-                    dlog('persisted estimated opponent', d.opp.name, 'at', d.opp.rating, 'as sheet baseline');
-                }
-            } catch (e) { /* non-fatal */ }
+            persistDuelEstimates(meta);
             meta.duel = null;
             saveMeta();
         }
@@ -3237,7 +3247,7 @@
         // finished fight is the highest-value moment to re-seed: combatants were
         // just wounded, revealed power, leveled, or broke — so mark a seed due
         // rather than waiting for a blind turn timer.
-        if (meta.duel && meta.duel.over) { meta.duel = null; meta.seedDueAfterFight = true; }
+        if (meta.duel && meta.duel.over) { persistDuelEstimates(meta); meta.duel = null; meta.seedDueAfterFight = true; }
         if (meta.battle && meta.battle.over) { meta.battle = null; meta.seedDueAfterFight = true; }
         renderHud(); // re-sync every turn: any previously missed render self-heals
 
