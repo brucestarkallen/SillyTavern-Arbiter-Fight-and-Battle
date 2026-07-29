@@ -151,7 +151,11 @@ const check = (extra) => JSON.stringify(Object.assign({ check: true, action: 'th
     /* ── source pins ─────────────────────────────────────────────────────── */
     {
         const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.js'), 'utf8');
-        ok('HUD dismiss clears the timeline (no prune-resurrection)', /m\.history = \[\];/.test(src));
+        // v0.37 narrowed this from a blanket wipe to fight-scoped filtering:
+        // resurrection is still impossible (no surviving snapshot holds the
+        // fight — behavior proven in arb_test_v57 §7) but unrelated rewind
+        // coverage survives.
+        ok('HUD dismiss drops the dismissed fight\'s timeline entries (no prune-resurrection)', /m\.history = m\.history\.filter\(h => !drop\(h\)\);/.test(src) && /fightHistoryFilter/.test(src));
         ok('reset chat data clears the timeline', /meta\.history = \[\];/.test(src));
         ok('deepCopy prefers structuredClone', /typeof structuredClone === 'function'/.test(src));
         const dc = E.deepCopy({ a: { b: [1, 2, { c: 3 }] } });

@@ -61,6 +61,14 @@ const fresh = () => { md.arbiter = { sheet: { actors: { 'Jovan Oda': { default: 
     ok('a standing always-on guard persists through the player\'s OWN attacks', SRC.includes('REMAINS player_guard even while the player ATTACKS'));
 
     /* ── 3. auditable wound math (unit) ─────────────────────────────────── */
+    // Deterministic dice for the wound-audit exchanges (u = 0.5 exactly, clear
+    // of every tie band and injury threshold). Without this, a randomly
+    // WOUNDING exchange changed oInj/pInj mid-assertion and an opponent
+    // momentum/opening swing changed the next round's oR — RNG-flaky reds.
+    // NOTE: globalThis.crypto is a getter-only (configurable) accessor in
+    // Node — plain assignment silently no-ops. Must defineProperty.
+    const cryptoDesc = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: { getRandomValues: (a) => { a[0] = 0x80000000; return a; } } });
     let meta = fresh();
     E.startDuel(meta, 'Jovan Oda', 'Kenpachi Zaraki', 'melee');
     meta.duel.opp.injuries = 3; // engine-inflicted wounds
@@ -81,9 +89,15 @@ const fresh = () => { md.arbiter = { sheet: { actors: { 'Jovan Oda': { default: 
     ok('the LIVE opponent rating drops immediately (10 → 8)', meta.duel.opp.rating === 8);
     respObj = JSON.stringify({ exchange: true, action: 'press before he recovers', circumstance: 1, why: 'attacking mid-recovery only — the wound is already registered' });
     await I([um('I drive the blade [roll]', 'w2'), um('I press him again [roll]', 'w3')], 0, () => {}, 'normal');
+    Object.defineProperty(globalThis, 'crypto', cryptoDesc); // deterministic-dice region ends
     entry = meta.log[meta.log.length - 1];
     ok('the NEXT exchange rolls against the wounded rating (oR 8, not 10)', entry.oR === 8 && entry.oBase === 8);
-    ok('no pristine-10 ever again once damage is registered', meta.log.every(l => l.r < 2 || l.oR <= 8));
+    // Invariant: the opponent's REGISTERED base rating (oBase) never shows the
+    // pristine 10 once damage is registered. Assert on oBase, NOT oR: oR is the
+    // effective rating (base − injuries + momentum + opening) and legitimately
+    // reaches 8.5–10 when the foe gains momentum or an opening — asserting on
+    // oR made this suite RNG-flaky (false red runs).
+    ok('no pristine-10 ever again once damage is registered', meta.log.every(l => l.r < 2 || (l.oBase !== undefined ? l.oBase : l.oR) <= 8));
 
     console.log(fails ? 'SUITE FAILED (' + fails + ')' : 'ALL v56 REGISTERED-DAMAGE INVARIANTS GREEN');
     process.exit(fails ? 1 : 0);

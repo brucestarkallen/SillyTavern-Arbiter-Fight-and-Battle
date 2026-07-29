@@ -89,7 +89,9 @@ const battleWinRate = async (playerComp, targetComp, N) => { let w = 0; for (let
   // ── F. War deltas include composure (source: stratagem, personal, maneuver) ──
   ok('war stratagem delta includes commander composure', /b\.cmdA - b\.cmdE \+ mv\.circumstance \+ mAll \+ preset\.bonus \+ composurePenalty\(meta\)/.test(src));
   ok('war personal-sortie delta includes commander + target composure', /personal[\s\S]{0,400}composurePenalty\(meta\) - combatantComposurePenalty\(target\)/.test(src));
-  ok('war maneuver delta includes formation + target composure', /cmdEdge\)[\s\S]{0,220}combatantComposurePenalty\(acting\) - combatantComposurePenalty\(target\)/.test(src));
+  // aR carries the formation's rating + commander edge; the delta subtracts
+  // the target and applies BOTH combatants' composure (post-v0.37 refactor).
+  ok('war maneuver delta includes formation + target composure', /acting\.rating - acting\.injuries \+ acting\.momentum[^;]*cmdEdge[\s\S]{0,200}aR - oR \+ mv\.circumstance \+ F \+ mAll \+ preset\.bonus \+ combatantComposurePenalty\(acting\) - combatantComposurePenalty\(target\)/.test(src));
 
   // ── G. Passive between-scenes recovery of the player's nerve ──
   let m = { composure: 2 }; E.passiveComposureRecovery(m); ok('quiet turn nudges nerve up (2 → 2.5)', m.composure === 2.5);
