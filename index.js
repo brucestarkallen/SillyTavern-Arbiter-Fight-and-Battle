@@ -139,8 +139,30 @@
         return h.toString(16);
     }
 
+    /** Committed-turn identity for a chat message. send_date distinguishes
+     *  identical texts in real ST chats; messages WITHOUT one (some imports /
+     *  forks) used to collide — two identical "I attack" turns shared one key,
+     *  so the later turn replayed the earlier turn's committed fate (or its
+     *  no-check verdict) without a roll. Fall back to the chat index in that
+     *  case. Trade-off, accepted: in a no-date chat, deleting earlier messages
+     *  shifts indices and the prune simply finds no anchors (its safe no-op),
+     *  exactly as if the timeline were unrecognizable. */
+    function turnKey(m, index) {
+        const d = String(m && m.send_date || '');
+        return hashStr(String(m && m.mes || '') + '|' + d + (d ? '' : '|' + index));
+    }
+
     function escapeRegex(s) {
         return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    /** Names from LLM JSON (or hand-edited sheet JSON) become object keys.
+     *  The magic keys would invoke the prototype setter / shadow builtins
+     *  instead of storing an entry — reject them at every key-injection site. */
+    const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+    function safeKey(k) {
+        const t = String(k || '').trim();
+        return (t && !UNSAFE_KEYS.has(t.toLowerCase())) ? t : null;
     }
 
     /* ------------------------------------------------------------------ */
@@ -3125,16 +3147,17 @@
         if (!Array.isArray(chat) || chat.length === 0) return;
 
         let lastUser = null;
+        let lastUserIdx = -1;
         for (let i = chat.length - 1; i >= 0; i--) {
             const m = chat[i];
-            if (m && m.is_user && !m.is_system && m.mes && m.mes.trim()) { lastUser = m; break; }
+            if (m && m.is_user && !m.is_system && m.mes && m.mes.trim()) { lastUser = m; lastUserIdx = i; break; }
         }
         if (!lastUser) return;
 
         const meta = getMeta();
         if (!meta) return;
 
-        const key = hashStr(String(lastUser.mes) + '|' + String(lastUser.send_date || ''));
+        const key = turnKey(lastUser, lastUserIdx);
         const sendDate = String(lastUser.send_date || '');
 
         // ── Committed-turn HISTORY: the timeline of resolved player turns ──
@@ -3161,7 +3184,7 @@
                     const m = chat[i];
                     if (!m || !m.is_user || m.is_system || !m.mes || !String(m.mes).trim()) continue;
                     scanned++;
-                    const k = hashStr(String(m.mes) + '|' + String(m.send_date || ''));
+                    const k = turnKey(m, i);
                     present.add(k);
                     if (hKeys.has(k)) anchors++;
                 }
@@ -3240,7 +3263,11 @@
 
         // Re-rolling the SAME message (edit or /arb): rewind any fight AND the
         // background world to the state before that turn, or effects double.
-        if (meta.cache && meta.cache.sendDate === sendDate && meta.cache.duelSnapshot !== undefined) {
+        // The sendDate identity heuristic is only meaningful when a send_date
+        // EXISTS — in no-date chats (some imports/forks) every turn's sendDate
+        // is '', so '' === '' would "match" the PREVIOUS turn and rewind it
+        // (in a fight: every round undoing the last). Guard on non-empty.
+        if (sendDate && meta.cache && meta.cache.sendDate === sendDate && meta.cache.duelSnapshot !== undefined) {
             restoreSnapshot(meta, meta.cache.duelSnapshot);
             if (meta.eventCache && meta.eventCache.key === key) delete meta.eventCache;
             // Keep the timeline consistent with the rewound world: this turn's
@@ -3248,7 +3275,7 @@
             // the roll fails — the next attempt starts from this clean state).
             if (meta.history.length) {
                 const last = meta.history[meta.history.length - 1];
-                if (last && (last.key === key || last.sendDate === sendDate)) meta.history.pop();
+                if (last && (last.key === key || (sendDate && last.sendDate === sendDate))) meta.history.pop();
             }
             // The committed fate no longer matches the rewound state: drop it.
             // If the re-roll below fails, the next attempt rolls fresh instead
@@ -3295,9 +3322,20 @@
             const last = meta.history[meta.history.length - 1];
             // A force re-roll (same key) or an edit that slipped past the prune
             // (same sendDate) REPLACES its turn; a fresh turn appends.
-            if (last && (last.key === key || last.sendDate === sendDate)) meta.history[meta.history.length - 1] = entry;
+            if (last && (last.key === key || (sendDate && last.sendDate === sendDate))) meta.history[meta.history.length - 1] = entry;
             else meta.history.push(entry);
             if (meta.history.length > HISTORY_CAP) meta.history.splice(0, meta.history.length - HISTORY_CAP);
+        };
+
+        // A fight opening THIS turn owns the beat. The background tick ran
+        // before adjudication (its "never during fights" guard only saw the
+        // pre-turn state), so a duel/battle/war the referee just opened could
+        // be injected alongside an ambient event hint. Suppress that hint —
+        // both the live injection and the committed eventText, so swipes of
+        // the fight-opening turn stay clean too.
+        const suppressEventBeat = () => {
+            if (meta.eventCache && meta.eventCache.key === key) delete meta.eventCache;
+            setEventInjection('');
         };
 
         // Background world: replay on the same message, tick on new ones.
