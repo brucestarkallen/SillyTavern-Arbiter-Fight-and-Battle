@@ -112,7 +112,7 @@ so realism properties hold automatically (verified by Monte Carlo test):
 3. Open your RP chat and just play. **Auto seed** (on by default) builds the
    capability sheet by itself after a few messages — reading the transcript
    **and your memory extensions' injections** (snippets, notepads, Author's
-   Note) — then quietly refreshes every N turns (default 50) to learn new
+   Note) — then quietly refreshes every N turns (default 100) to learn new
    faces and growth, never overwriting ratings you hand-edited. World Threads
    auto-seed too when the Event engine is on. `/arbseed` and `/arbthreads`
    remain as manual force-updates only. Edit it in the panel —
@@ -759,7 +759,7 @@ at 0, and stack up to a capped total so no one is dragged infinitely negative.
 
 The sheet now tracks power growth. No manual setup is needed to start — the
 first auto-seed fires after your 2nd message and builds the cast itself. On
-each refresh (every N turns, default 50), ratings Arbiter generated are RAISED
+each refresh (every N turns, default 100), ratings Arbiter generated are RAISED
 as the story shows characters training, leveling, or unlocking power (a foe
 who was trained-4 and became elite is re-rated 7) — but never lowered, so a
 temporary setback doesn't nerf anyone. Crucially, any rating YOU type into the
