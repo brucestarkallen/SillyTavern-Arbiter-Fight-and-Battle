@@ -2560,9 +2560,15 @@
         if (res.outcome) {
             lines.push('Outcome-only duel: no scores are kept — each exchange stands on its own verdict, and consequences persist only as the fiction carries them. The duel continues until the STORY ends it: when the accumulated outcomes make a yield, flight, interruption, or finish the honest next beat, narrate that ending yourself. Arbiter will not call a winner.');
         } else if (duel.over) {
-            lines.push(res.victor === 'player'
-                ? duel.opp.name + ' is beaten — narrate the finish the fiction demands (downed, disarmed, dropped). Not negotiable.'
-                : duel.player.name + ' is beaten — narrate how ' + duel.opp.name + ' turns the failed combo into the finish. Not negotiable.');
+            if (res.victor === 'draw') {
+                // Mutual knockout off a combo (net TRADE emptying both pools):
+                // "DRAW — BOTH DOWN", never a false winner — see buildDuelDirective.
+                lines.push('MUTUAL FINISH: the combo ends with BOTH fighters down — ' + duel.player.name + ' and ' + duel.opp.name + ' take each other out in the same flurry. Narrate the double finish the fiction demands; NEITHER side prevails and neither can rally. Not negotiable.');
+            } else {
+                lines.push(res.victor === 'player'
+                    ? duel.opp.name + ' is beaten — narrate the finish the fiction demands (downed, disarmed, dropped). Not negotiable.'
+                    : duel.player.name + ' is beaten — narrate how ' + duel.opp.name + ' turns the failed combo into the finish. Not negotiable.');
+            }
         } else {
             lines.push('The duel continues — end on a live beat, not a resolution.');
         }
@@ -2622,9 +2628,17 @@
             lines.push('Outcome-only duel: no scores are kept — each exchange stands on its own verdict, and consequences persist only as the fiction carries them.');
             lines.push('The duel continues until the STORY ends it: when the accumulated outcomes make a yield, flight, interruption, or finish the honest next beat, narrate that ending yourself. Arbiter will not call a winner.');
         } else if (duel.over) {
-            const winner = duel.victor === 'player' ? duel.player : duel.opp;
-            const loser = duel.victor === 'player' ? duel.opp : duel.player;
-            lines.push('DECISIVE POSITION: ' + loser.name + ' is beaten — ' + winner.name + ' has won this duel. Narrate the resolution the fiction demands (yield, knockout, disarm, retreat, or kill, per the story\'s tone). The result itself is not negotiable; the loser cannot rally.');
+            if (duel.victor === 'draw') {
+                // Mutual knockout (a TRADE that emptied BOTH poise pools). The
+                // HUD shows "DRAW — BOTH DOWN"; the binding text must say the
+                // same — a binary winner/loser ternary here used to declare
+                // the OPPONENT the winner: a false, non-negotiable defeat.
+                lines.push('MUTUAL FINISH: ' + duel.player.name + ' and ' + duel.opp.name + ' have taken EACH OTHER out in the same exchange — both are down. Narrate the double finish the fiction demands (a final clash neither walks away from, both collapsing, per the story\'s tone). NEITHER side prevails and neither can rally; this duel has no winner. The result is not negotiable.');
+            } else {
+                const winner = duel.victor === 'player' ? duel.player : duel.opp;
+                const loser = duel.victor === 'player' ? duel.opp : duel.player;
+                lines.push('DECISIVE POSITION: ' + loser.name + ' is beaten — ' + winner.name + ' has won this duel. Narrate the resolution the fiction demands (yield, knockout, disarm, retreat, or kill, per the story\'s tone). The result itself is not negotiable; the loser cannot rally.');
+            }
         } else {
             lines.push('Condition after the exchange: ' + sideStatus(duel.player) + '; ' + sideStatus(duel.opp) + '. The duel continues — end on a live beat, not a resolution.');
         }
