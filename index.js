@@ -2743,6 +2743,23 @@
         return null;
     }
 
+    /** Remove a sheet actor under the SAME identity discipline used everywhere
+     *  else: exact (case-insensitive) first, then same-person token-subset —
+     *  never a bare substring, so "/arbforget Ana" can never delete "Anakin".
+     *  Returns the removed key, or null. */
+    function forgetActor(meta, name) {
+        const actors = meta.sheet?.actors || {};
+        const target = String(name || '').trim();
+        if (!target) return null;
+        for (const k of Object.keys(actors)) {
+            if (k.toLowerCase().trim() === target.toLowerCase()) { delete actors[k]; return k; }
+        }
+        for (const k of Object.keys(actors)) {
+            if (samePersonName(k, target)) { delete actors[k]; return k; }
+        }
+        return null;
+    }
+
     /** Sum of an actor's persistent conditions (broken arm, curse, poison…).
      *  Negative numbers handicap; positive could represent a persistent buff.
      *  Stored on the sheet entry as conditions: [{name, mod}]. Clamped so no
@@ -4707,11 +4724,7 @@
             ['arbforget', (na, text) => {                const name = String(text || '').trim();
                 const m = getMeta(); if (!m) return '';
                 if (!name) { toast('warning', 'Usage: /arbforget <name to remove from the sheet>'); return ''; }
-                const actors = m.sheet?.actors || {};
-                let removed = null;
-                for (const k of Object.keys(actors)) {
-                    if (k.toLowerCase() === name.toLowerCase() || k.toLowerCase().includes(name.toLowerCase())) { delete actors[k]; removed = k; break; }
-                }
+                const removed = forgetActor(m, name); // exact-then-token match — never a bare substring
                 saveMeta(); renderSheet();
                 toast(removed ? 'success' : 'warning', removed ? 'Removed "' + removed + '" from the sheet.' : 'No sheet entry matched "' + name + '".');
                 return '';
