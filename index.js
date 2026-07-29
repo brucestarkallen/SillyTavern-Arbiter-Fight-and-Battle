@@ -3611,6 +3611,7 @@
                     }
                     startDuel(meta, mcName(meta), adj.duel_start, combatDomain(adj.domain), adj.opponent_rating, adj.scale_mismatch);
                     const directive = buildArmedDirective(meta, adj);
+                    suppressEventBeat();
                     setInjection(directive);
                     commitCache(directive, 'ARMED');
                     saveMeta(); renderHud();
@@ -3621,6 +3622,7 @@
                     const started = startBattle(meta, adj.battle_start.allies, adj.battle_start.enemies, combatDomain(adj.domain), adj.scale_mismatch, adj.opponent_rating);
                     if (started) {
                         const directive = buildArmedDirective(meta, adj);
+                        suppressEventBeat();
                         setInjection(directive);
                         commitCache(directive, 'ARMED');
                         saveMeta(); renderHud();
@@ -3632,6 +3634,7 @@
                     const started = startWar(meta, adj.war_start.allies, adj.war_start.enemies, adj.war_start.enemy_commander, adj.scale_mismatch);
                     if (started) {
                         const directive = buildArmedDirective(meta, adj);
+                        suppressEventBeat();
                         setInjection(directive);
                         commitCache(directive, 'ARMED');
                         saveMeta(); renderHud();
@@ -3657,6 +3660,7 @@
                 startDuel(meta, adj.actor, adj.duel_start, combatDomain(adj.domain), adj.opponent_rating, adj.scale_mismatch);
                 const res = resolveDuelExchange(meta, adj.circumstance);
                 const directive = buildDuelDirective(meta, adj, res);
+                suppressEventBeat();
                 setInjection(directive);
                 commitCache(directive, res.tier);
                 pushLog(meta, adj, res, meta.duel.round);
@@ -3672,6 +3676,7 @@
                 if (started) {
                     const out = resolveBattleRound(meta, { kind: 'fight', target: null, action: adj.action, circumstance: adj.circumstance });
                     const directive = buildBattleDirective(meta, adj, out);
+                    suppressEventBeat();
                     setInjection(directive);
                     commitCache(directive, out.mcRes ? out.mcRes.tier : null);
                     if (out.mcRes) pushLog(meta, adj, out.mcRes, meta.battle.round);
@@ -3687,6 +3692,7 @@
                 if (started) {
                     const out = resolveWarRound(meta, { kind: 'maneuver', acting: null, target: null, action: adj.action, circumstance: adj.circumstance });
                     const directive = buildWarDirective(meta, adj, out);
+                    suppressEventBeat();
                     setInjection(directive);
                     commitCache(directive, out.focalRes ? out.focalRes.tier : null);
                     if (out.focalRes) pushLog(meta, adj, out.focalRes, meta.battle.round);
