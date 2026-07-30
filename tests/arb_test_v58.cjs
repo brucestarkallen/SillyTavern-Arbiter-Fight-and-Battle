@@ -48,6 +48,15 @@ const freshMeta = () => ({ sheet: { actors: {} }, log: [], threads: [], oneShot:
 
 section('1. OPENINGS ARE SYMMETRIC AT EVERY SCALE (duel · battle · war)');
 {
+    // DETERMINISTIC RNG for the unit checks below. Without it the "opening was
+    // CONSUMED" assertions are FLAKY: applyExchangeEffects re-GRANTS the
+    // opponent an opening on SUCCESS_COST (~18% of rolls), so a post-round read
+    // cannot tell a fresh grant from an unconsumed one. Pinning u = 0.5 forces
+    // a SETBACK in both branches — that grants the PLAYER the opening and
+    // leaves the opponent's flag alone, so the read means what it claims.
+    const cryptoDesc = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: { getRandomValues: (a) => { a[0] = 0x80000000; return a; } } });
+
     // ── Unit: the opponent's opening must lower the acting side's delta ──
     const battleDelta = (targetOpening) => {
         const m = freshMeta();
@@ -89,6 +98,9 @@ section('1. OPENINGS ARE SYMMETRIC AT EVERY SCALE (duel · battle · war)');
         return out.focalRes.delta;
     };
     ok('war (commander sortie): the enemy\'s opening lowers the commander\'s delta', personalDelta(true) === personalDelta(false) - 1);
+
+    // Real randomness again for the behavioural sweep below.
+    if (cryptoDesc) Object.defineProperty(globalThis, 'crypto', cryptoDesc); else delete globalThis.crypto;
 
     // ── Behavioural: a mirror-matched battle must be a coin flip ──
     let allies = 0, enemies = 0;

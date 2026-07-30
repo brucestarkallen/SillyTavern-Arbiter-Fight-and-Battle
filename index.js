@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.39.0';
+    const VERSION = '0.39.1';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
     // Committed-turn history depth: how many resolved player turns keep a
