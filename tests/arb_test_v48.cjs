@@ -129,6 +129,13 @@ const lastDirective = () => { for (let i = injected.length - 1; i >= 0; i--) if 
         sequence: [{ strike: 'fall back', circumstance: 1 }, { strike: 'drink potion', circumstance: 1 }, { strike: 'bandage arm', circumstance: 0 }] });
     ok('normalizeDuelAdj strips the sequence from a recover move', nAdj && nAdj.moveKind === 'recover' && nAdj.sequence === null);
     // End-to-end: through the interceptor, the opponent must take NO poise damage.
+    // PINNED RNG: from v0.40 a standing foe always lands a floored 0.5, so
+    // "poise rose" depends on the heal roll beating it. u = 0.1 forces the best
+    // tier and makes the check deterministic. (The invariant this section really
+    // guards — the opponent taking ZERO damage — never depended on the roll.)
+    const recCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    Object.defineProperty(globalThis, 'crypto', { configurable: true,
+        value: { getRandomValues: (a) => { a[0] = Math.floor(0.1 * 4294967296); return a; } } });
     md.arbiter = { sheet: { actors: {} }, log: [], oneShot: null, cache: null, composure: 6,
         duel: { active: true, over: false, victor: null, round: 2, domain: 'melee', scaleMismatch: 0,
             player: { name: 'Jovan', rating: 5, poise: 3, maxPoise: 5, injuries: 0, momentum: 0, opening: false },
@@ -140,6 +147,7 @@ const lastDirective = () => { for (let i = injected.length - 1; i >= 0; i--) if 
     ok('a recover-with-sequence heals the player (poise rose above 3)', md.arbiter.duel.player.poise > 3);
     ok('a recover-with-sequence deals ZERO damage to the opponent', md.arbiter.duel.opp.poise === 4);
     ok('the directive narrates a recovery, not a combo', /disengages to recover/.test(lastDirective()) && !/combo/.test(lastDirective()));
+    if (recCrypto) Object.defineProperty(globalThis, 'crypto', recCrypto); else delete globalThis.crypto;
 
     /* ── 5. battle_start carries opponent_rating to the headline foe ────── */
     {
