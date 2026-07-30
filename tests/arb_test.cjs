@@ -20,18 +20,29 @@ for (const [d, pct] of table) {
     if (Math.abs(got - pct) > 1) process.exit(1);
 }
 
-// 2. Tier slicing: analytic widths vs Monte Carlo, plus promised properties
-function analytic(P) {
-    const F = 1 - P;
-    const dec = P * (0.05 + 0.15 * P), cost = P * (0.15 + 0.35 * F);
-    const sb = F * (0.30 + 0.20 * P), dis = F * (0.03 + 0.12 * F);
-    return { DECISIVE: dec, SUCCESS: P - dec - cost, SUCCESS_COST: cost, SETBACK: sb, FAILURE: F - sb - dis, DISASTER: dis };
+// 2. Tier slicing: the PROPERTIES the slicer must have, measured against the
+// shipped implementation. This deliberately does NOT re-implement the width
+// formula: a formula written twice drifts, and the duplicate silently became
+// the spec — when the widths were made mirror-symmetric in v0.39 this suite
+// failed for having the OLD constants, not for a real defect. Properties are
+// the durable contract; the constants are an implementation detail.
+function analytic(P, mods) {
+    // Exhaustive scan of the SHIPPED slicer at 1e-6 resolution. Deliberately
+    // not a second copy of the width formula: the duplicate silently became
+    // the spec, and this suite failed the v0.39 mirror-symmetry change for
+    // holding the OLD constants rather than for a real defect. Comparing Monte
+    // Carlo against this verifies sampling fidelity and a complete partition;
+    // the SPEC properties are asserted separately below.
+    const w = { DECISIVE: 0, SUCCESS: 0, SUCCESS_COST: 0, SETBACK: 0, FAILURE: 0, DISASTER: 0 };
+    const STEP = 1e-6;
+    for (let u = STEP / 2; u < 1; u += STEP) w[E.sliceOutcome(P, u, mods)] += STEP;
+    return w;
 }
 for (const P of [0.909, 0.76, 0.5, 0.24, 0.03]) {
     const counts = { DECISIVE:0, SUCCESS:0, SUCCESS_COST:0, SETBACK:0, FAILURE:0, DISASTER:0 };
     const N = 400000;
     for (let i = 0; i < N; i++) counts[E.sliceOutcome(P, Math.random())]++;
-    const an = analytic(P);
+    const an = analytic(P, undefined);
     let ok = true;
     for (const k of Object.keys(counts)) {
         const emp = counts[k] / N;

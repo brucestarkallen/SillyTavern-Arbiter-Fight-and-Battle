@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.38.0';
+    const VERSION = '0.39.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
     // Committed-turn history depth: how many resolved player turns keep a
@@ -186,12 +186,28 @@
     function sliceOutcome(P, u, mods) {
         const m = mods || { dec: 1, cost: 1, sb: 1, dis: 1 };
         const F = 1 - P;
-        let decisiveW = P * (0.05 + 0.15 * P) * m.dec;         // deepest success
-        let costW = P * (0.15 + 0.35 * F) * m.cost;            // scraped-by success
-        let setbackW = F * (0.30 + 0.20 * P) * m.sb;           // fail-forward
-        let disasterW = F * (0.03 + 0.12 * F) * m.dis;         // far tail
-        costW = Math.min(costW, Math.max(0, P - decisiveW));   // safety clamps
-        disasterW = Math.min(disasterW, Math.max(0, F - setbackW));
+        // MIRROR SYMMETRY. Each band pair uses ONE formula, applied to the
+        // acting side's P and to the opposing side's F. That makes the whole
+        // distribution provably identical under (u, P) -> (1 - u, 1 - P): two
+        // identically-capable fighters are a coin flip at ANY fight length.
+        // The old pairs used different constants (0.05/0.15 vs 0.03/0.12, and
+        // 0.15/0.35 vs 0.30/0.20), so the player drew DECISIVE more often than
+        // DISASTER and SETBACK more often than SUCCESS_COST. Both edges
+        // COMPOUND (an opening is +1 next round, an injury is -1 forever)
+        // while the offsetting poise tax is linear, so a mirror match drifted
+        // further pro-player the longer it ran: 51.1% at poise 5, 54.3% at 12.
+        // Constants are the midpoints of the old pairs, which preserves the
+        // even-odds mass of each pair EXACTLY (0.1075 extremes, 0.3625
+        // middles) — the shape is unchanged, only the tilt is gone.
+        const XA = 0.04, XB = 0.135;   // extremes: DECISIVE / DISASTER
+        const MA = 0.225, MB = 0.275;  // middles:  SUCCESS_COST / SETBACK
+        let decisiveW = P * (XA + XB * P) * m.dec;             // deepest success
+        let costW = P * (MA + MB * F) * m.cost;                // scraped-by success
+        let setbackW = F * (MA + MB * P) * m.sb;               // fail-forward (mirror of cost)
+        let disasterW = F * (XA + XB * F) * m.dis;             // far tail (mirror of decisive)
+        // Safety rails, mirrored: a middle band can never eat its extreme's slice.
+        costW = Math.min(costW, Math.max(0, P - decisiveW));
+        setbackW = Math.min(setbackW, Math.max(0, F - disasterW));
 
         if (u < P) {
             if (u < decisiveW) return 'DECISIVE';
@@ -296,7 +312,15 @@
         DECISIVE: { opp: 2, self: 0, injureOpp: true, winner: 'self' },
         SUCCESS: { opp: 1.5, self: 0, winner: 'self' },
         SUCCESS_COST: { opp: 1, self: 0.5, winner: 'self' },
-        SETBACK: { opp: 0, self: 1, winner: 'opp', opening: true },
+        // SETBACK is the exact mirror of SUCCESS_COST: the opponent won the
+        // exchange but left themselves exposed doing it, which is precisely
+        // what "fail FORWARD" means — the failed attempt yields a real opening.
+        // It used to cost the opponent nothing while SUCCESS_COST taxed the
+        // player 0.5, the one anti-player term in the economy. Mirroring both
+        // the widths above and this effect makes the exchange economy provably
+        // even. Poise is footing, breath and control, not flesh, so a failed
+        // lunge that forces an overextension legitimately costs the foe.
+        SETBACK: { opp: 0.5, self: 1, winner: 'opp', opening: true },
         FAILURE: { opp: 0, self: 1.5, winner: 'opp' },
         DISASTER: { opp: 0, self: 2, injureSelf: true, winner: 'opp' },
         // Ties — neither side clearly prevails in the exchange:
@@ -2725,7 +2749,7 @@
         if (res.opening) lines.push('(' + duel.player.name + ' is exploiting the opening from the previous exchange.)');
         if (!res.outcome && fx.injureOpp) lines.push('Inflict a concrete lasting injury on ' + duel.opp.name + ' and name it in the prose; it visibly weakens them from now on.');
         if (!res.outcome && fx.injureSelf && !(adj.playerGuard && !adj.counterPath)) lines.push('Inflict a concrete lasting injury on ' + duel.player.name + ' and name it in the prose; it visibly weakens them from now on.');
-        if (!res.outcome && res.tier === 'SETBACK') lines.push(duel.player.name + ' loses this exchange but spots a real opening to exploit next round — show it.');
+        if (!res.outcome && res.tier === 'SETBACK' && !duel.over) lines.push(duel.player.name + ' loses this exchange but spots a real opening to exploit next round — show it.');
         if (res.outcome) {
             lines.push('Outcome-only duel: no scores are kept — each exchange stands on its own verdict, and consequences persist only as the fiction carries them.');
             lines.push('The duel continues until the STORY ends it: when the accumulated outcomes make a yield, flight, interruption, or finish the honest next beat, narrate that ending yourself. Arbiter will not call a winner.');

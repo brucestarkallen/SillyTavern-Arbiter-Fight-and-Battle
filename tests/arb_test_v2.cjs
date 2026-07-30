@@ -12,13 +12,21 @@ let fails = 0;
 const ok = (name, cond) => { console.log(name + ':', cond ? 'OK' : 'FAIL'); if (!cond) fails++; };
 
 // 1. Preset structure + ordering of disaster widths at P=0.5
+// Widths are MEASURED off the shipped slicer by bisection rather than
+// re-derived from a copy of its formula — a duplicated formula drifts and then
+// silently becomes the spec (this suite failed the v0.39 mirror-symmetry
+// change for holding the old constants, not for a real defect).
 const anal = (P, m) => {
-  const F = 1 - P;
-  const dec = P * (0.05 + 0.15 * P) * m.dec;
-  const cost = Math.min(P * (0.15 + 0.35 * F) * m.cost, Math.max(0, P - dec));
-  const sb = F * (0.30 + 0.20 * P) * m.sb;
-  const dis = Math.min(F * (0.03 + 0.12 * F) * m.dis, Math.max(0, F - sb));
-  return { dec, cost, sb, dis, cleanS: P - dec - cost, cleanF: F - sb - dis };
+    // Exhaustive scan of the SHIPPED slicer at 1e-6 resolution. Deliberately
+    // not a second copy of the width formula: the duplicate silently became
+    // the spec, and this suite failed the v0.39 mirror-symmetry change for
+    // holding the OLD constants rather than for a real defect. Comparing Monte
+    // Carlo against this verifies sampling fidelity and a complete partition;
+    // the SPEC properties are asserted separately below.
+  const w = { DECISIVE: 0, SUCCESS: 0, SUCCESS_COST: 0, SETBACK: 0, FAILURE: 0, DISASTER: 0 };
+  const STEP = 1e-6;
+  for (let u = STEP / 2; u < 1; u += STEP) w[E.sliceOutcome(P, u, m)] += STEP;
+  return { dec: w.DECISIVE, cost: w.SUCCESS_COST, sb: w.SETBACK, dis: w.DISASTER, cleanS: w.SUCCESS, cleanF: w.FAILURE };
 };
 const g = anal(0.5, E.PRESETS.gritty.mods), r = anal(0.5, E.PRESETS.realistic.mods), h = anal(0.5, E.PRESETS.heroic.mods);
 ok('preset disaster ordering heroic<realistic<gritty', h.dis < r.dis && r.dis < g.dis);
@@ -42,7 +50,9 @@ const fresh = () => ({ poise: 5, maxPoise: 5, injuries: 0, momentum: 0, opening:
 let x = E.applyExchangeEffects(fresh(), fresh(), 'DECISIVE');
 ok('DECISIVE: opp -2 + injury, self momentum', x.opp.poise === 3 && x.opp.injuries === 1 && x.player.momentum === 0.5 && !x.over);
 x = E.applyExchangeEffects(fresh(), fresh(), 'SETBACK');
-ok('SETBACK: self -1, opening granted, opp momentum', x.player.poise === 4 && x.player.opening === true && x.opp.momentum === 0.5 && x.player.momentum === 0);
+// SETBACK is the exact mirror of SUCCESS_COST (v0.39): the opponent won the
+// exchange but paid 0.5 for the exposure that hands the player the opening.
+ok('SETBACK: self -1, opp -0.5, opening granted, opp momentum', x.player.poise === 4 && x.opp.poise === 4.5 && x.player.opening === true && x.opp.momentum === 0.5 && x.player.momentum === 0);
 x = E.applyExchangeEffects(fresh(), fresh(), 'SUCCESS_COST');
 ok('SUCCESS_COST: opp -1, self -0.5, self momentum', x.opp.poise === 4 && x.player.poise === 4.5 && x.player.momentum === 0.5);
 x = E.applyExchangeEffects({ poise: 2, maxPoise: 5, injuries: 0, momentum: 0 }, fresh(), 'DISASTER');

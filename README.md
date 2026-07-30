@@ -40,11 +40,13 @@ as before.
   **deleting a few exchanges (or branching the chat) automatically rewinds**
   fights, composure, and the background world to the surviving timeline.
 
-Under the hood it's rigorously fair: exchange damage is exactly symmetric (no hidden
+Under the hood it's rigorously fair: the whole outcome distribution is
+mirror-symmetric, so two identically-capable fighters are a coin flip at any
+fight length and exchange damage is exactly symmetric (no hidden
 tilt toward the player), the referee only ever sees a neutral prompt (never your
 persona or the card's "unbeatable protagonist" framing), and the injected verdict is
 purely qualitative — it never leaks a die, a probability, or a stat to the
-storyteller. The whole engine is covered by 59 regression suites that freeze those
+storyteller. The whole engine is covered by 60 regression suites that freeze those
 fairness, stability, and no-spoiler guarantees; see the audit notes further down.
 
 ## How it works
@@ -89,9 +91,11 @@ Six tiers, sliced from the margin: **DECISIVE SUCCESS · SUCCESS · SUCCESS WITH
 COST · SETBACK (fail-forward) · FAILURE · DISASTER**. Slice widths scale with P,
 so realism properties hold automatically (verified by Monte Carlo test):
 
-- Experts rarely botch: at P=91%, disasters are ~0.4% of outcomes.
-- Underdogs who win mostly win narrow and costly: at P=24%, ~42% of their wins
-  carry a cost (vs ~18% for an expert).
+- Experts rarely botch: at P=91%, disasters are ~0.5% of outcomes.
+- Underdogs who win mostly win narrow and costly: at P=24%, ~43% of their wins
+  carry a cost (vs ~25% for an expert).
+- The pairs are exact mirrors: a tier's width at P equals its opposite's width
+  at 1−P, so an even matchup is even by construction, not by calibration.
 - Failures near the threshold become setbacks: you fail *forward* — an opening,
   information, partial progress — never a stonewall.
 
@@ -1014,17 +1018,58 @@ Seven defects, all root-caused:
   the referee's raw name as an object key, so a foe named `__proto__` rewrote
   the actors object's prototype instead of adding an entry.
 
-One finding was measured and deliberately **not** changed: at even odds the
-exchange economy runs about 3.4% of a poise pool per exchange *against* the
-player, because a success-with-cost taxes the winner 0.5 while its mirror on
-the losing side taxes the opponent nothing. That is a tilt away from the
-player, consistent with the engine's whole point, and re-tuning it would change
-the feel of every fight — so it is documented here rather than silently
-adjusted.
+One further finding came out of that pass and is fixed in v0.39 below: the
+exchange economy was not actually even, and the tilt ran *toward* the player and
+grew with fight length.
+
+## An even matchup is even — mirror symmetry (v0.39)
+
+The engine's core promise is that two identically-capable fighters are a coin
+flip. Measured, they were not: a mirror-matched duel — same rating, same poise,
+same everything — came out **51.1%** for the player at poise 5, **52.6%** at 8,
+and **54.3%** at 12. The tilt grew the longer the fight ran, which is the
+signature of a compounding cause.
+
+It was structural. Each pair of outcome bands is meant to be a mirror — a
+decisive win is the same event as the opponent's disaster, seen from the other
+side — but the pairs used *different* constants, so at even odds the player drew
+DECISIVE more often than DISASTER (6.2% vs 4.5%) and SETBACK more often than
+SUCCESS-WITH-COST (20.0% vs 16.3%). Both of those edges **compound**: a
+fail-forward opening is +1 on the next exchange, and an injury is −1 rating for
+the rest of the fight. The only term pulling the other way — a
+success-with-cost taxing the winner half a point of poise, with no equivalent on
+the losing side — is linear. Compounding beats linear, so the longer the fight,
+the further it drifted.
+
+The fix is one formula per pair, applied to the acting side's odds and to the
+opposing side's, plus making a setback the exact mirror of a
+success-with-cost: the opponent won that exchange, but they paid for the
+exposure that handed you the opening. (Poise is footing, breath and control, not
+flesh — a failed lunge that forces an overextension legitimately costs the
+foe.) The distribution is now provably unchanged under swapping the two sides,
+so an even matchup is even *by construction* rather than by calibration:
+
+| | before | after |
+|---|---|---|
+| mirror duel, poise 5 | 51.1% | **49.9%** |
+| mirror duel, poise 8 | 52.6% | **49.9%** |
+| mirror duel, poise 12 | 54.3% | **50.2%** |
+| mirror battle | 51.7% | **50.5%** |
+| mirror war | 53.8% | **50.4%** |
+| per-exchange attrition | 4.0% against the player | **0.2%** (noise) |
+
+Nothing else moved. The probability curve is untouched — your chance of winning
+an exchange is still exactly the logistic — and the constants were chosen as the
+midpoints of the old pairs, which preserves the even-odds mass of each pair
+exactly: the distribution's *shape* is unchanged, only its tilt is gone. Skill
+still decides everything: two rating points is still a 93% fight, an expert
+still botches under 1% of the time, and an underdog who wins still wins narrow
+and costly. `gritty` and `heroic` remain deliberately lopsided — that is what
+they are for — while `realistic` is now exactly what it says.
 
 ## Tests
 
-`tests/` contains 59 suites covering every invariant (including that every toast is plain text — no markup, no double-escaping, in any SillyTavern build): the probability
+`tests/` contains 60 suites covering every invariant (including that every toast is plain text — no markup, no double-escaping, in any SillyTavern build): the probability
 curve, tier slicing per preset, exchange effects, full battles to
 conclusion, snapshot rewinds, event tiers, thread ladders, memory-collector
 coverage, gate behavior, player identity (story name vs persona label),
