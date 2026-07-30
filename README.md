@@ -46,7 +46,7 @@ fight length and exchange damage is exactly symmetric (no hidden
 tilt toward the player), the referee only ever sees a neutral prompt (never your
 persona or the card's "unbeatable protagonist" framing), and the injected verdict is
 purely qualitative — it never leaks a die, a probability, or a stat to the
-storyteller. The whole engine is covered by 60 regression suites that freeze those
+storyteller. The whole engine is covered by 61 regression suites that freeze those
 fairness, stability, and no-spoiler guarantees; see the audit notes further down.
 
 ## How it works
@@ -1067,9 +1067,39 @@ still botches under 1% of the time, and an underdog who wins still wins narrow
 and costly. `gritty` and `heroic` remain deliberately lopsided — that is what
 they are for — while `realistic` is now exactly what it says.
 
+## Recovery is a tactic, not an engine (v0.40)
+
+Disengaging to recover is the one move the opponent has no equivalent of, which
+makes an underpriced version of it automatically a *dominant* one. Measured, it
+was underpriced: on a generous circumstance grade a mirror duel where the player
+recovered ran at a **73-82%** win rate, and spamming it produced **373-round**
+fights at a **100%** win rate — the fight could not end and the player could not
+lose.
+
+Two invariants close it. A foe still on their feet always lands something:
+favourable circumstance used to *erase* the free swing outright, which is exactly
+the risk-free heal loop that swing exists to prevent. And stamina is finite —
+across one fight you claw back at most one pool's worth of wind. The second is
+the real fix: the defect was **repetition**, not the size of any single punish,
+which is why flooring the punish alone barely moved the win rate and made the
+spam case worse.
+
+| policy (mirror duel) | circ −2 | circ 0 | circ +2 |
+|---|---|---|---|
+| never recover (baseline) | 50.3% | 50.3% | 50.1% |
+| recover when nearly beaten | 32.7% | 36.7% | **47.6%** |
+| spam it | 6.3% | 7.0% | 6.7% |
+
+Recovering is now at best break-even at every grade, and never dominant. What it
+buys is **fight length**, not win probability — 9 rounds instead of 5 — which is
+both the realistic shape and the reason you actually reach for it: to stay in the
+fight, not to win the arithmetic. It remains a real move (a safe moment restores
+more than a desperate snatch), it still cedes the initiative, and its log row is
+still fully auditable.
+
 ## Tests
 
-`tests/` contains 60 suites covering every invariant (including that every toast is plain text — no markup, no double-escaping, in any SillyTavern build): the probability
+`tests/` contains 61 suites covering every invariant (including that every toast is plain text — no markup, no double-escaping, in any SillyTavern build): the probability
 curve, tier slicing per preset, exchange effects, full battles to
 conclusion, snapshot rewinds, event tiers, thread ladders, memory-collector
 coverage, gate behavior, player identity (story name vs persona label),

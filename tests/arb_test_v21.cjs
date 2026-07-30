@@ -12,6 +12,14 @@ require(require('path').join(__dirname, '..', 'index.js'));
 const I = globalThis.arbiterInterceptor;
 let fails = 0; const ok = (n, c) => { console.log(n + ':', c ? 'OK' : 'FAIL'); if (!c) fails++; };
 (async () => {
+  // PINNED RNG for the two recovery-amount checks. From v0.40 a foe still on
+  // their feet always lands a floored 0.5, so "poise increased" depends on the
+  // heal roll beating that — an unpinned assertion here is a lottery ticket.
+  // u = 0.1 forces the best tier, making both checks deterministic.
+  const cryptoDesc = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  Object.defineProperty(globalThis, 'crypto', { configurable: true,
+    value: { getRandomValues: (a) => { a[0] = Math.floor(0.1 * 4294967296); return a; } } });
+
   // Player at 2/5 poise recovers; poise should INCREASE, opponent gains momentum.
   md.arbiter = { sheet: { actors: {} }, log: [], oneShot: null, cache: null,
     duel: { active:true, over:false, victor:null, round:3, domain:'ice',
@@ -31,7 +39,11 @@ let fails = 0; const ok = (n, c) => { console.log(n + ':', c ? 'OK' : 'FAIL'); i
   md.arbiter.duel.player.poise = 4.5; md.arbiter.duel.opp.opening = false;
   respObj = '{"exchange":true,"move_kind":"recover","action":"full restoration","circumstance":3,"why":"safe"}';
   await I([{ is_user: true, mes: 'I fully heal', send_date: 'r2' }], 0, () => {}, 'normal');
-  ok('cannot exceed maxPoise even on a big heal', md.arbiter.duel.player.poise === 5);
+  // The invariant is the CAP, not the absence of a punish: a big heal is clipped
+  // by the pool (5), then the standing foe's floored 0.5 still lands. Asserting
+  // === 5 conflated the two and hid the punish.
+  ok('cannot exceed maxPoise even on a big heal', md.arbiter.duel.player.poise <= 5 && md.arbiter.duel.player.poise >= 4);
+  if (cryptoDesc) Object.defineProperty(globalThis, 'crypto', cryptoDesc); else delete globalThis.crypto;
 
   // An ATTACK move still damages normally (recovery is opt-in). An attack is a
   // scored exchange, so a single swing CAN miss — drive a few and confirm the

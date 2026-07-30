@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.39.1';
+    const VERSION = '0.40.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
     // Committed-turn history depth: how many resolved player turns keep a
@@ -2539,9 +2539,19 @@
         const P = probFromDelta(delta);
         const u = rngFloat();
         const tier = sliceOutcome(P, u, preset.mods);
-        const heal = RECOVER_EFFECTS[tier] ?? 1;
+        // STAMINA IS FINITE. Across one fight a fighter can claw back at most
+        // one pool's worth of wind, tracked cumulatively. Without this, any
+        // recovery whose heal out-earns the opponent's free swing became an
+        // unbounded loop: the fight could not end and the player could not
+        // lose. Measured on a generous circumstance grade: 373-round duels at a
+        // 100% win rate, and no counter-punish tuning fixes that, because the
+        // defect is REPETITION, not the size of one punish. Recovery remains a
+        // real tactic — it just cannot be an engine for net poise.
+        const budget = Math.max(0, duel.player.maxPoise - (duel.recovered || 0));
+        const heal = Math.min(RECOVER_EFFECTS[tier] ?? 1, budget);
         const before = duel.player.poise;
         duel.player.poise = Math.min(duel.player.maxPoise, Math.round((duel.player.poise + heal) * 2) / 2);
+        duel.recovered = Math.round(((duel.recovered || 0) + (duel.player.poise - before)) * 2) / 2;
         // The opponent gets a free swing while the player disengages. A more
         // dangerous or unimpaired foe lands harder; a rattled one less. This
         // is what stops recovery from being a risk-free heal loop — against a
@@ -2552,8 +2562,17 @@
         else if (oppEff >= 5) counter = 1;
         else if (oppEff >= 3) counter = 0.5;
         // Safe circumstance (a secured position, +) reduces the free hit; a
-        // desperate snatch under pressure (-) increases it.
-        counter = Math.max(0, counter - circumstance * 0.5);
+        // desperate snatch under pressure (-) increases it. But a foe still on
+        // their feet ALWAYS gets a piece of you: circumstance could previously
+        // erase the punish outright (at +2 the swing went to zero), which is
+        // exactly the risk-free heal loop this counter exists to prevent — and
+        // recovery is a move the opponent has no equivalent of, so an unpunished
+        // one is a strictly dominant option. Measured: a mirror duel where the
+        // player recovers on +2 went to a 73-82% win rate. Floored, favourable
+        // circumstance still HELPS a lot, it just can't buy total safety while
+        // the fight is live.
+        const counterFloor = counter > 0 ? 0.5 : 0;
+        counter = Math.max(counterFloor, counter - circumstance * 0.5);
         if (counter > 0) {
             duel.player.poise = Math.round((duel.player.poise - counter) * 2) / 2;
         }
