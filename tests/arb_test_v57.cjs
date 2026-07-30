@@ -245,7 +245,11 @@ const lastPrompt = (key) => { for (let i = promptCalls.length - 1; i >= 0; i--) 
         ok('sendDate heuristic guarded against empty dates', SRC.includes("(sendDate && last.sendDate === sendDate)") && SRC.includes("if (sendDate && meta.cache && meta.cache.sendDate === sendDate"));
         ok('one-time compat probe for old ST builds', SRC.includes('interceptorRan') && SRC.includes('genEndedSeen'));
         ok('continue-replay design documented', SRC.includes("'continue' stays eligible by deliberate design"));
-        ok('version bumped consistently', SRC.includes("const VERSION = '0.37.0';") && JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8')).version === '0.37.0');
+        // Version-AGNOSTIC on purpose: a hardcoded string here has to be
+        // hand-edited every release, and a forgotten edit fails the gate for
+        // the wrong reason. The standing invariant is that the two agree.
+        const stamp = (SRC.match(/const VERSION = '([^']+)'/) || [])[1];
+        ok('version bumped consistently', !!stamp && JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8')).version === stamp);
     }
 
     console.log(fails ? `\nSUITE FAILED (${fails})` : '\nALL v57 AUDIT-FIX INVARIANTS GREEN');

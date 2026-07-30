@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.37.0';
+    const VERSION = '0.38.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
     // Committed-turn history depth: how many resolved player turns keep a
@@ -1364,14 +1364,22 @@
                 const entry = count > 1 ? findActorExact(meta, base)
                     : (findActor(meta, base) || findActor(meta, name));
                 let rating;
+                let estimated = false;
                 if (entry) rating = ratingFor(entry, domain, fallback);
                 else if (isEnemySide && Number.isFinite(oppEstimate) && (estimateFor === null || estimateFor === base)) {
                     estimateFor = base;
                     rating = clamp(oppEstimate, 0, 10);
+                    // Only a SINGLE named foe carries the estimate forward as a
+                    // sheet baseline (see persistDuelEstimates). An xN squad is
+                    // a count the fiction spawned, never a character, and must
+                    // never be promoted into the cast.
+                    estimated = count === 1;
                 } else rating = isEnemySide ? clamp(TIER_RATINGS.trained, 0, 10) : fallback;
                 const poise = poiseFor(entry, s.duelPoise);
                 const cMax = clamp(s.composureMax, 3, 12);
-                units.push({ name, rating, poise, maxPoise: poise, injuries: 0, momentum: 0, opening: false, standing: true, isPlayer: false, composure: cMax, composureMax: cMax });
+                const unit = { name, rating, poise, maxPoise: poise, injuries: 0, momentum: 0, opening: false, standing: true, isPlayer: false, composure: cMax, composureMax: cMax };
+                if (estimated) unit.estimated = true;
+                units.push(unit);
             }
         }
         return units;
@@ -1416,7 +1424,10 @@
     }
 
     function endBattle(meta, silent) {
-        if (meta && meta.battle) meta.battle = null;
+        if (meta && meta.battle) {
+            persistDuelEstimates(meta); // an estimated foe's baseline survives teardown, as duels do
+            meta.battle = null;
+        }
         renderHud();
         if (!silent) toast('info', 'Battle ended.');
     }
@@ -1427,8 +1438,15 @@
 
     /** One ally-vs-enemy pairing, from the ally's perspective. Returns a report line. */
     function resolvePairing(a, e, extraDelta, preset) {
+        // Openings are SYMMETRIC — the duel rule of v0.30, finally applied at
+        // every scale. Reading only the ACTING side's fail-forward opening let
+        // the ally line bank a +1 the enemy line could accrue (via the acting
+        // side's SUCCESS_COST) but never spend: a quiet, compounding tilt
+        // toward the player's side, measured at ~57/43 in mirror-matched
+        // battles. Both sides now consume and spend what they earned.
         const openingBonus = a.opening ? 1 : 0; a.opening = false;
-        const delta = clamp((a.rating - a.injuries + a.momentum + openingBonus) - (e.rating - e.injuries + e.momentum) + combatantComposurePenalty(a) - combatantComposurePenalty(e) + extraDelta + preset.bonus, -13, 13);
+        const eOpeningBonus = e.opening ? 1 : 0; e.opening = false;
+        const delta = clamp((a.rating - a.injuries + a.momentum + openingBonus) - (e.rating - e.injuries + e.momentum + eOpeningBonus) + combatantComposurePenalty(a) - combatantComposurePenalty(e) + extraDelta + preset.bonus, -13, 13);
         const _P = probFromDelta(delta); const _u = rngFloat();
         const tier = tieCheck(sliceOutcome(_P, _u, preset.mods), _P, _u, getSettings().tieBand);
         const r = applyExchangeEffects(a, e, tier, delta);
@@ -1473,7 +1491,8 @@
                     const oR = target.rating - target.injuries + target.momentum;
                     const delta = clamp(aR - oR + mv.circumstance + preset.bonus + mAll + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                     const P = probFromDelta(delta); const u = rngFloat();
-                    mcRes = { delta, P, u, tier: tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand), command: false, aR, oR, oppLabel: target.name };
+                    mcRes = { delta, P, u, tier: tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand), command: false, aR, oR, oppLabel: target.name,
+                        pBase: mc.rating, pInj: mc.injuries, oBase: target.rating, oInj: target.injuries };
                 }
             }
             b.round += 1;
@@ -1495,9 +1514,15 @@
             if (!target) target = standing(b.enemies).slice().sort((x, y) => y.rating - x.rating)[0];
             if (target) {
                 mcTargetName = target.name;
+                // Audit components are captured BEFORE the exchange mutates
+                // them: reading injuries back off live state afterwards
+                // back-dates this round's new wound into the roll that
+                // preceded it (the log printed "3-1=3").
+                const audit = { pBase: mc.rating, pInj: mc.injuries, oBase: target.rating, oInj: target.injuries };
                 const openingBonus = mc.opening ? 1 : 0; mc.opening = false;
+                const tOpeningBonus = target.opening ? 1 : 0; target.opening = false; // symmetric: the foe spends theirs too
                 const aR = mc.rating - mc.injuries + mc.momentum + openingBonus;
-                const oR = target.rating - target.injuries + target.momentum;
+                const oR = target.rating - target.injuries + target.momentum + tOpeningBonus;
                 const delta = clamp(aR - oR + mv.circumstance + preset.bonus + mAll + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                 const P = probFromDelta(delta); const u = rngFloat();
                 const tier = tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand);
@@ -1505,7 +1530,7 @@
                 Object.assign(mc, r.player); Object.assign(target, r.opp);
                 if (mc.poise <= 0) mc.standing = false;
                 if (target.poise <= 0) target.standing = false;
-                mcRes = { delta, P, u, tier, command: false, aR, oR, oppLabel: target.name };
+                mcRes = Object.assign({ delta, P, u, tier, command: false, aR, oR, oppLabel: target.name }, audit);
             }
         }
 
@@ -1696,7 +1721,16 @@
         };
         const allies = mkUnits((allyNames || []).filter(n => !isMcAlias(meta, n)), false);
         const enemies = mkUnits(enemyNames || [], true);
-        if (!enemies.length) return null;
+        // A war needs BOTH lines. With no allied formation — the referee named
+        // none, or named only the player (filtered as an alias) — the collapse
+        // check read the empty allied line as a BROKEN one and called the field
+        // for the enemy on round 1: a non-negotiable rout with nothing rolled.
+        // Refusing here lets the turn fall through to an honest check or duel
+        // instead of fabricating a defeat.
+        if (!enemies.length || !allies.length) {
+            dlog('war not opened:', enemies.length ? 'no allied formations named' : 'no enemy formations named');
+            return null;
+        }
         persistDuelEstimates(meta); // mode exclusivity (see startDuel) must not lose an estimated foe's baseline
         meta.duel = null;
         meta.battle = {
@@ -1757,7 +1791,8 @@
                     const oR = target.rating - target.injuries + target.momentum;
                     const delta = clamp(aR - oR + mv.circumstance + F + mAll + preset.bonus + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                     const P = probFromDelta(delta); const u = rngFloat();
-                    focalRes = { delta, P, u, tier: tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand), personal: true, aR, oR, oppLabel: target.name };
+                    focalRes = { delta, P, u, tier: tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand), personal: true, aR, oR, oppLabel: target.name,
+                        pBase: mc.rating, pInj: mc.injuries, oBase: target.rating, oInj: target.injuries };
                 }
             } else {
                 acting = pickUnit(nonPlayer(b.allies), mv.acting);
@@ -1767,7 +1802,8 @@
                     const oR = target.rating - target.injuries + target.momentum;
                     const delta = clamp(aR - oR + mv.circumstance + F + mAll + preset.bonus + combatantComposurePenalty(acting) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                     const P = probFromDelta(delta); const u = rngFloat();
-                    focalRes = { delta, P, u, tier: tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand), aR, oR, oppLabel: target.name };
+                    focalRes = { delta, P, u, tier: tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand), aR, oR, oppLabel: target.name,
+                        pBase: acting.rating, pInj: acting.injuries, oBase: target.rating, oInj: target.injuries };
                 }
             }
             b.round += 1;
@@ -1795,9 +1831,11 @@
         } else if (mv.kind === 'personal' && mc) {
             target = pickUnit(b.enemies, mv.target);
             if (target) {
+                const audit = { pBase: mc.rating, pInj: mc.injuries, oBase: target.rating, oInj: target.injuries };
                 const openingBonus = mc.opening ? 1 : 0; mc.opening = false;
+                const tOpeningBonus = target.opening ? 1 : 0; target.opening = false; // symmetric
                 const aR = mc.rating - mc.injuries + mc.momentum + openingBonus;
-                const oR = target.rating - target.injuries + target.momentum;
+                const oR = target.rating - target.injuries + target.momentum + tOpeningBonus;
                 const delta = clamp(aR - oR + mv.circumstance + F + mAll + preset.bonus + composurePenalty(meta) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                 const P = probFromDelta(delta); const u = rngFloat();
                 const tier = tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand);
@@ -1805,15 +1843,17 @@
                 Object.assign(mc, r.player); Object.assign(target, r.opp);
                 if (mc.poise <= 0) mc.standing = false;
                 if (target.poise <= 0) target.standing = false;
-                focalRes = { delta, P, u, tier, personal: true, aR, oR, oppLabel: target.name };
+                focalRes = Object.assign({ delta, P, u, tier, personal: true, aR, oR, oppLabel: target.name }, audit);
             }
         } else {
             acting = pickUnit(nonPlayer(b.allies), mv.acting);
             target = pickUnit(b.enemies, mv.target);
             if (acting && target) {
+                const audit = { pBase: acting.rating, pInj: acting.injuries, oBase: target.rating, oInj: target.injuries };
                 const openingBonus = acting.opening ? 1 : 0; acting.opening = false;
+                const tOpeningBonus = target.opening ? 1 : 0; target.opening = false; // symmetric
                 const aR = acting.rating - acting.injuries + acting.momentum + openingBonus + cmdEdge;
-                const oR = target.rating - target.injuries + target.momentum;
+                const oR = target.rating - target.injuries + target.momentum + tOpeningBonus;
                 const delta = clamp(aR - oR + mv.circumstance + F + mAll + preset.bonus + combatantComposurePenalty(acting) - combatantComposurePenalty(target) + (b.scaleMismatch || 0), -13, 13);
                 const P = probFromDelta(delta); const u = rngFloat();
                 const tier = tieCheck(sliceOutcome(P, u, preset.mods), P, u, getSettings().tieBand);
@@ -1821,7 +1861,7 @@
                 Object.assign(acting, r.player); Object.assign(target, r.opp);
                 if (acting.poise <= 0) acting.standing = false;
                 if (target.poise <= 0) target.standing = false;
-                focalRes = { delta, P, u, tier, aR, oR, oppLabel: target.name };
+                focalRes = Object.assign({ delta, P, u, tier, aR, oR, oppLabel: target.name }, audit);
             }
         }
 
@@ -2390,6 +2430,7 @@
         // Mode exclusivity: exactly ONE fight can be live. A manually-started
         // battle left a prior duel frozen underneath (the interceptor served
         // the duel while the HUD showed the battle — split-brain).
+        persistDuelEstimates(meta); // the discarded battle's estimated foes keep their baseline
         meta.battle = null;
         meta.duel = {
             active: true,
@@ -2413,17 +2454,34 @@
      *  baseline on the most common duel ending. */
     function persistDuelEstimates(meta) {
         try {
-            const d = meta && meta.duel;
-            if (!d || !d.opp || !d.opp.estimated || !d.opp.name) return false;
-            if (findActor(meta, d.opp.name)) return false;
-            meta.sheet = meta.sheet || { actors: {} };
-            meta.sheet.actors[d.opp.name] = {
-                default: clamp(d.opp.rating, 0, 10),
-                domains: { [d.domain || 'melee']: clamp(d.opp.rating, 0, 10) },
-                _estimated: true,
+            if (!meta) return false;
+            let wrote = false;
+            const put = (name, rating, domain) => {
+                // safeKey: this is an LLM-supplied name reaching an object key.
+                // Without it a foe named "__proto__" silently rewrote the
+                // actors object's prototype instead of adding an entry.
+                const key = safeKey(name);
+                if (!key || findActor(meta, key)) return;
+                meta.sheet = meta.sheet || { actors: {} };
+                if (!meta.sheet.actors || typeof meta.sheet.actors !== 'object') meta.sheet.actors = {};
+                meta.sheet.actors[key] = {
+                    default: clamp(rating, 0, 10),
+                    domains: { [domain || 'melee']: clamp(rating, 0, 10) },
+                    _estimated: true,
+                };
+                dlog('persisted estimated combatant', key, 'at', rating, 'as sheet baseline');
+                wrote = true;
             };
-            dlog('persisted estimated opponent', d.opp.name, 'at', d.opp.rating, 'as sheet baseline');
-            return true;
+            const d = meta.duel;
+            if (d && d.opp && d.opp.estimated && d.opp.name) put(d.opp.name, d.opp.rating, d.domain);
+            // Battles get the same treatment duels do: the referee's
+            // scene-derived rating for a named foe used to be thrown away on
+            // teardown and re-estimated (differently) at the next encounter.
+            const b = meta.battle;
+            if (b && Array.isArray(b.enemies)) {
+                for (const u of b.enemies) if (u && u.estimated && u.name) put(u.name, u.rating, b.domain);
+            }
+            return wrote;
         } catch (e) { /* non-fatal */ return false; }
     }
 
@@ -2483,7 +2541,11 @@
         duel.round += 1;
         let over = false, victor = null;
         if (duel.player.poise <= 0) { over = true; victor = 'opp'; duel.over = true; duel.victor = 'opp'; } // caught fatally mid-recovery
-        return { recover: true, tier, gained, counter, delta, P, u, over, victor };
+        // Same audit shape as every other resolver. A recovery rolls a flat
+        // self-baseline of 5 against the opponent's rating, so the log prints
+        // "(5 vs 7, circ +1)" instead of "undefined vs undefined".
+        return { recover: true, tier, gained, counter, delta, P, u, over, victor,
+            aR: 5, oR: duel.opp.rating, oppLabel: duel.opp.name };
     }
 
     function resolveDuelExchange(meta, circumstance, moveKind) {
@@ -2503,6 +2565,9 @@
         const oppOpeningBonus = (!style && duel.opp.opening) ? 1 : 0;
         if (!style) duel.opp.opening = false;
 
+        // Captured BEFORE the exchange mutates them, so the log's wound math
+        // describes the roll that happened, not the state it produced.
+        const audit = { pBase: duel.player.rating, pInj: duel.player.injuries, oBase: duel.opp.rating, oInj: duel.opp.injuries };
         const effP = duel.player.rating - duel.player.injuries + duel.player.momentum + openingBonus;
         const effO = duel.opp.rating - duel.opp.injuries + duel.opp.momentum + oppOpeningBonus;
         const compPen = composurePenalty(meta);                    // player's strain (hurts player)
@@ -2516,7 +2581,7 @@
             // Outcome-only: the verdict IS the whole result. No poise damage,
             // no forced injuries, no momentum, no engine-declared end.
             duel.round += 1;
-            return { aR: effP, oR: effO, oppLabel: duel.opp.name, delta, P, u, tier, opening: false, outcome: true };
+            return Object.assign({ aR: effP, oR: effO, oppLabel: duel.opp.name, delta, P, u, tier, opening: false, outcome: true }, audit);
         }
         const applied = applyExchangeEffects(duel.player, duel.opp, tier, delta);
         duel.player = Object.assign({ name: duel.player.name, rating: duel.player.rating, maxPoise: duel.player.maxPoise }, applied.player);
@@ -2526,7 +2591,7 @@
             duel.over = true;
             duel.victor = applied.victor;
         }
-        return { aR: effP, oR: effO, oppLabel: duel.opp.name, delta, P, u, tier, opening: openingBonus > 0 };
+        return Object.assign({ aR: effP, oR: effO, oppLabel: duel.opp.name, delta, P, u, tier, opening: openingBonus > 0 }, audit);
     }
 
     /** Resolve a described COMBO (2+ strikes) as ONE exchange with per-strike
@@ -2546,6 +2611,7 @@
         const compPen = composurePenalty(meta);
         const oppCompPen = combatantComposurePenalty(duel.opp);
         const effO = duel.opp.rating - duel.opp.injuries + duel.opp.momentum + oppOpeningBonus;
+        const audit = { pBase: duel.player.rating, pInj: duel.player.injuries, oBase: duel.opp.rating, oInj: duel.opp.injuries };
         const scoreOf = { DECISIVE: 2, SUCCESS: 1, SUCCESS_COST: 1, TRADE: 0, STALEMATE: 0, SETBACK: -1, FAILURE: -1, DISASTER: -2 };
         const seq = adj.sequence, n = seq.length;
         const steps = [];
@@ -2571,14 +2637,14 @@
         const margin = clamp((duel.player.rating - duel.player.injuries + duel.player.momentum) - effO + avgCirc + (duel.scaleMismatch || 0) + compPen - oppCompPen + preset.bonus, -13, 13);
         if (style) {
             duel.round += 1;
-            return { steps, overall, tier: overall, aR: duel.player.rating, oR: effO, delta: margin, P: probFromDelta(margin), u: lastU, combo: true, over: false, victor: null, outcome: true };
+            return Object.assign({ steps, overall, tier: overall, aR: duel.player.rating, oR: effO, delta: margin, P: probFromDelta(margin), u: lastU, combo: true, over: false, victor: null, outcome: true }, audit);
         }
         const applied = applyExchangeEffects(duel.player, duel.opp, overall, margin);
         duel.player = Object.assign({ name: duel.player.name, rating: duel.player.rating, maxPoise: duel.player.maxPoise }, applied.player);
         duel.opp = Object.assign({ name: duel.opp.name, rating: duel.opp.rating, maxPoise: duel.opp.maxPoise }, applied.opp);
         duel.round += 1;
         if (applied.over) { duel.over = true; duel.victor = applied.victor; }
-        return { steps, overall, tier: overall, aR: duel.player.rating, oR: effO, delta: margin, P: probFromDelta(margin), u: lastU, combo: true, over: applied.over, victor: applied.victor };
+        return Object.assign({ steps, overall, tier: overall, aR: duel.player.rating, oR: effO, delta: margin, P: probFromDelta(margin), u: lastU, combo: true, over: applied.over, victor: applied.victor }, audit);
     }
 
     function buildDuelSequenceDirective(meta, adj, res) {
@@ -3081,8 +3147,11 @@
             u: Math.round(res.u * 1000) / 1000,
             guard: adj.playerGuard || undefined,
             path: adj.counterPath || undefined,
-            pBase: adj.pBase, pInj: adj.pInj || undefined,
-            oBase: adj.oBase, oInj: adj.oInj || undefined,
+            // The RESOLVER's own pre-roll components win. Reading them back
+            // off live state after the exchange back-dates this round's new
+            // wound into the roll that preceded it ("3−1=3").
+            pBase: res.pBase ?? adj.pBase, pInj: res.pInj ?? adj.pInj,
+            oBase: res.oBase ?? adj.oBase, oInj: res.oInj ?? adj.oInj,
             tier: res.tier,
         };
         meta.log.unshift(line);
@@ -3095,7 +3164,17 @@
         // Registered wounds are AUDITABLE: a wounded side shows base−wounds=eff
         // ("10−2=8"), so a foe still printing a pristine "10" is the visible
         // signal that narrated damage was never filed as a condition.
-        const side = (eff, base, inj) => (inj && Number.isFinite(Number(base))) ? (base + '−' + inj + '=' + eff) : String(eff);
+        // The sum must be TRUE. Anything else folded into the effective rating
+        // (momentum, a spent opening, a commander's edge) is shown as its own
+        // term rather than swallowed — the line used to print "7−1=6.5".
+        const side = (eff, base, inj) => {
+            if (!Number.isFinite(Number(base))) return String(eff);
+            const wounds = Number(inj) || 0;
+            const rest = Math.round((Number(eff) - (Number(base) - wounds)) * 100) / 100;
+            if (!wounds && !rest) return String(eff);
+            return String(base) + (wounds ? '−' + wounds : '') +
+                (rest ? (rest > 0 ? '+' : '−') + Math.abs(rest) : '') + '=' + eff;
+        };
         return 'Δ=' + (l.delta >= 0 ? '+' : '') + l.delta + ' (' + side(l.aR, l.pBase, l.pInj) + ' vs ' + side(l.oR, l.oBase, l.oInj) +
             ', circ ' + sign + l.circ + ') → P ' + l.P + '% → u ' + l.u;
     }
@@ -3308,7 +3387,7 @@
         // just wounded, revealed power, leveled, or broke — so mark a seed due
         // rather than waiting for a blind turn timer.
         if (meta.duel && meta.duel.over) { persistDuelEstimates(meta); meta.duel = null; meta.seedDueAfterFight = true; }
-        if (meta.battle && meta.battle.over) { meta.battle = null; meta.seedDueAfterFight = true; }
+        if (meta.battle && meta.battle.over) { persistDuelEstimates(meta); meta.battle = null; meta.seedDueAfterFight = true; }
         renderHud(); // re-sync every turn: any previously missed render self-heals
 
         // Snapshot the pre-turn world BEFORE any ticks, exchanges, or counters
@@ -4579,6 +4658,11 @@
         delete meta.encounterSeeds;
         delete meta.worldSeeds;
         meta.lastAutoSeedAt = -999999;
+        // Hidden state goes too: a wipe that leaves the player "near breaking"
+        // keeps a silent −3 on every roll with no sheet, log, or fight left to
+        // explain where it came from.
+        delete meta.composure;
+        delete meta.seedDueAfterFight;
         saveMeta();
         renderSheet(); renderThreads(); renderLog(); renderHud();
         clearInjection();

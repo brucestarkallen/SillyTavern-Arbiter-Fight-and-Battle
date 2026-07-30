@@ -44,7 +44,7 @@ Under the hood it's rigorously fair: exchange damage is exactly symmetric (no hi
 tilt toward the player), the referee only ever sees a neutral prompt (never your
 persona or the card's "unbeatable protagonist" framing), and the injected verdict is
 purely qualitative — it never leaks a die, a probability, or a stat to the
-storyteller. The whole engine is covered by 57 regression suites that freeze those
+storyteller. The whole engine is covered by 59 regression suites that freeze those
 fairness, stability, and no-spoiler guarantees; see the audit notes further down.
 
 ## How it works
@@ -516,22 +516,23 @@ character's **full** name (e.g. "Jovan Wessex") makes it airtight.
 Every subsystem was put under a systematic correctness audit: the probability
 core, exchange economy, single/combo/recovery duels, skirmish battles, army-scale
 war, the composure system, the background event engine, state snapshot/restore,
-and model-output parsing. Zero defects were found — the outcome slices partition
-cleanly with no cross-boundary leaks, exchange damage is symmetric to machine
-precision (no hidden tilt toward the player), tens of thousands of randomized
-duels/battles/wars all terminate with valid victors and never produce NaN,
-composure and all pity-timer dice stay inside their bounds, story-seed pools are
-consumed exactly once, and every normalizer survives arbitrary malformed model
-output without throwing. Those checks are now frozen as three standing regression
-suites (four total): the invariant suites above, plus an end-to-end suite that
+and model-output parsing. The outcome slices partition cleanly with no
+cross-boundary leaks, a given tier deals identical damage whichever side it
+falls on (SUCCESS at +m strips exactly what FAILURE at −m strips), tens of
+thousands of randomized duels/battles/wars all terminate with valid victors and
+never produce NaN, composure and all pity-timer dice stay inside their bounds,
+story-seed pools are consumed exactly once, and every normalizer survives
+arbitrary malformed model output without throwing. Those checks are frozen as
+standing regression suites, plus an end-to-end suite that
 drives the *real* interceptor through every production flow — no-check turns,
 single checks, duel start/exchange/finish, battle and war openings, fast mode,
 swipe-stability (a swipe or regenerate re-rolls the prose, never the fate),
 edit-rewind (editing an action rewinds cleanly instead of stacking a second
 outcome), and re-seeding after a fight — while asserting that no injected
 directive ever leaks a mechanical number (a delta, probability, or die) to the
-storyteller. Forty-five suites in total, so no future change can silently break
-the fairness, stability, or immersion the engine rests on.
+storyteller. No future change can silently break the fairness, stability, or
+immersion the engine rests on — see the v0.38 audit below for the fairness holes
+this discipline caught.
 
 
 
@@ -972,9 +973,58 @@ split entry created earlier (conditions on the label beside ratings on the
 story name) is folded into one automatically. Blank = persona name; chats
 where the two match behave exactly as before.
 
+## Deep audit — fairness at every scale (v0.38)
+
+A full line-by-line audit of the engine, with every finding reproduced by a
+running probe before anything was changed and frozen afterwards as suite 59.
+Seven defects, all root-caused:
+
+- **Openings were only symmetric in duels.** v0.30 made the opponent's
+  fail-forward opening count in the delta — but only for duels. Battles and
+  wars kept *granting* the enemy an opening (on the acting side's
+  success-with-cost) and then never read it, so the ally line banked a +1 the
+  enemy line could earn but never spend. Mirror-matched battles — identical
+  ratings, identical counts, identical poise — came out **56.8% / 43.2%** for
+  the player's side (8.2σ from even). Every exchange at every scale now
+  consumes and spends both sides' openings: **51.7% / 48.4%**.
+- **A war with no allied formations was an instant round-1 defeat.** If the
+  referee opened a war naming enemy formations but no friendly ones (or named
+  only the player, filtered out as an alias), the collapse check read the empty
+  allied line as a *broken* one and injected a non-negotiable rout — with
+  nothing rolled. A war now needs both lines or it does not open, and the turn
+  falls through to an honest check.
+- **The wound-audit line printed false arithmetic.** It read the components
+  back off live state *after* the exchange had already mutated them, so a
+  disaster that inflicted a wound printed `3−1=3`; and anything else folded
+  into the effective rating (momentum, a spent opening, a commander's edge) was
+  swallowed, printing `7−1=6.5`. Resolvers now hand back the components the
+  roll actually used, captured pre-mutation, and the line shows every term.
+- **Duel recovery rows logged `undefined vs undefined`.** The recovery resolver
+  never returned the audit fields every other resolver does.
+- **Reset chat data left composure behind.** A wipe could leave the player
+  silently carrying up to −3 on every roll with no sheet, log, or fight left
+  to explain it.
+- **A battle-estimated foe lost its baseline on teardown.** Duels persist the
+  referee's scene-derived rating; battles threw it away and re-estimated
+  (differently) at the next encounter. Single named foes now persist — an
+  `xN` squad is a count the fiction spawned, never a character, and is never
+  promoted into the cast.
+- **One key-injection site could still reach the prototype.** The v0.37
+  hardening covered every path but this one: persisting an estimated foe wrote
+  the referee's raw name as an object key, so a foe named `__proto__` rewrote
+  the actors object's prototype instead of adding an entry.
+
+One finding was measured and deliberately **not** changed: at even odds the
+exchange economy runs about 3.4% of a poise pool per exchange *against* the
+player, because a success-with-cost taxes the winner 0.5 while its mirror on
+the losing side taxes the opponent nothing. That is a tilt away from the
+player, consistent with the engine's whole point, and re-tuning it would change
+the feel of every fight — so it is documented here rather than silently
+adjusted.
+
 ## Tests
 
-`tests/` contains 57 suites covering every invariant (including that every toast is plain text — no markup, no double-escaping, in any SillyTavern build): the probability
+`tests/` contains 59 suites covering every invariant (including that every toast is plain text — no markup, no double-escaping, in any SillyTavern build): the probability
 curve, tier slicing per preset, exchange effects, full battles to
 conclusion, snapshot rewinds, event tiers, thread ladders, memory-collector
 coverage, gate behavior, player identity (story name vs persona label),
@@ -998,8 +1048,8 @@ Author's Note), so coverage is verifiable, not assumed.
 
 The adjudicator profile works with thinking models — the JSON parser scans
 past reasoning (even reasoning containing braces) to find the real object —
-but per-turn checks on a thinking endpoint will regularly outlive the 6 s
-timeout and silently skip, which defeats the purpose. Recommended: a fast
+but per-turn checks on a thinking endpoint will regularly outlive the
+12 s default timeout and silently skip, which defeats the purpose. Recommended: a fast
 non-thinking model for the adjudicator profile; your MAIN storyteller can be
 as think-y as you like (Arbiter never touches that connection), and seeding
 calls (45 s budget) tolerate thinking models fine. If you insist on a
@@ -1007,5 +1057,5 @@ thinking adjudicator, raise the timeout to 30-60 s and accept the wait.
 
 ## Roadmap
 
-- v0.4 — per-domain duel tactics (switching domains mid-fight), richer injury
-  vocabulary, configurable event tables.
+- Per-domain duel tactics (switching domains mid-fight) and a richer injury
+  vocabulary.

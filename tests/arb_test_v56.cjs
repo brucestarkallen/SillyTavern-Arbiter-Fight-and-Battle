@@ -78,7 +78,10 @@ const fresh = () => { md.arbiter = { sheet: { actors: { 'Jovan Oda': { default: 
     ok('the log entry carries the wound breakdown fields', entry.oBase === 10 && entry.oInj === 3 && entry.oR === 7);
     const line = E.mathLine(entry);
     ok('the math line prints base−wounds=eff for the wounded side', line.includes('10−3=7'));
-    ok('an unwounded side still prints the plain number', entry.pInj === undefined && line.includes('(8 vs 10−3=7'));
+    // pInj is a real 0 now (the resolver reports its pre-roll components
+    // instead of the old `adj.pInj || undefined` coercion). What this check
+    // actually protects is the RENDER: no wounds, no extra terms, plain number.
+    ok('an unwounded side still prints the plain number', entry.pInj === 0 && line.includes('(8 vs 10−3=7'));
 
     /* ── 4. E2E: a referee condition drops the LIVE opponent next beat ──── */
     meta = fresh();
