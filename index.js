@@ -260,7 +260,7 @@
         },
         SUCCESS_COST: {
             name: 'SUCCESS WITH COST',
-            text: 'It succeeds, BUT attach a PROPORTIONATE cost — a small tax on the win, never a reversal of it: a ceded position, a strained or half-spent resource, lost tempo, minor harm, or a sliver of unwanted notice. Keep it contained. A cost at THIS level must not undo what the player deliberately achieved — do NOT blow a secret, cover, or concealment they took pains to protect; at most a faint, deniable flicker of suspicion they can still manage. Fully exposing a guarded secret is a SETBACK-or-worse beat, earned by a bad result — not invented off a success.',
+            text: 'It works, but with a proportionate price — a small tax on the win, never a reversal of it: a ceded position, a strained or half-spent resource, lost tempo, minor harm, or a sliver of unwanted notice. Keep it contained. A price at this level never undoes what the player deliberately achieved — don\'t blow a secret, cover, or concealment they took pains to protect; at most a faint, deniable flicker of suspicion they can still manage. Fully exposing a guarded secret is a setback-or-worse beat, earned by a bad result, not invented off a success.',
         },
         SETBACK: {
             name: 'SETBACK',
@@ -559,7 +559,7 @@
         adjIncludeHidden: false,  // include ST-hidden ("ghosted") messages too (Arbiter's own directives are always excluded)
         sensitivity: 'normal',    // conservative | normal | aggressive
         injectDepth: 0,
-        injectRole: 'system',     // system | user | assistant
+        injectRole: 'user',       // system | user | assistant — 'user' default: the note reads as Bruce speaking, not a system injection
         defaultRating: 5,         // rating when an actor/domain is unknown
         toastResults: true,
         showMath: false,          // include the math line in the toast
@@ -1027,7 +1027,10 @@
 
     // Arbiter's own injected directives can surface as messages in some setups;
     // never feed them back to the referee (it would be grading its own output).
-    const isArbiterLine = (m) => typeof m.mes === 'string' && /^\s*\[ARBITER/i.test(m.mes);
+    // Recognizes BOTH the legacy "[ARBITER …]" header and the current
+    // "Bruce's note" header, so directives committed before the voice change
+    // are still filtered out of referee transcripts.
+    const isArbiterLine = (m) => typeof m.mes === 'string' && /^\s*(?:\[ARBITER|Bruce's note)/i.test(m.mes);
 
     function compactRecent(chat, n, excludeMes, includeHidden) {
         const out = [];
@@ -1603,34 +1606,34 @@
         const b = meta.battle;
         const mc = b.allies.find(u => u.isPlayer);
         const lines = [
-            '[ARBITER — battle, round ' + b.round + ': ' + standing(b.allies).length + '/' + b.allies.length + ' vs ' + standing(b.enemies).length + '/' + b.enemies.length + ']',
+            'Bruce\'s note — battle, round ' + b.round + ': ' + standing(b.allies).length + '/' + b.allies.length + ' vs ' + standing(b.enemies).length + '/' + b.enemies.length,
         ];
         if (out.mcRes) {
             const t = TIERS[out.mcRes.tier] || TIERS.FAILURE;
             if (out.mcRes.command) {
                 lines.push(mc.name + ' commands: ' + adj.action + '.');
-                lines.push('The order\'s effect: ' + t.name + ' — reflect it in how the whole side fights this round.');
+                lines.push('The order\'s effect: ' + t.name + ' — let it show in how the whole side fights this round.');
             } else {
                 lines.push(mc.name + '\'s move: ' + adj.action + '.');
                 lines.push('Their exchange: ' + t.name + ' — ' + t.text);
                 lines.push(...guardLines(adj, mc.name, 'The enemy', out.mcRes.tier));
             }
             const fx = out.outcome ? {} : (EXCHANGE_EFFECTS[out.mcRes.tier] || {});
-            if (fx.injureOpp && !out.mcRes.command) lines.push('Inflict a concrete lasting injury on their opponent and name it.');
-            if (fx.injureSelf && !(adj.playerGuard && !adj.counterPath)) lines.push('Inflict a concrete lasting injury on ' + mc.name + ' and name it; it visibly weakens them.');
+            if (fx.injureOpp && !out.mcRes.command) lines.push('Give their opponent a real, lasting injury and name it.');
+            if (fx.injureSelf && !(adj.playerGuard && !adj.counterPath)) lines.push('Give ' + mc.name + ' a real, lasting injury and name it — it visibly weakens them.');
         }
         const rep = out.reports.slice(0, 4);
-        if (rep.length) lines.push('Elsewhere on the field (weave these in as fact): ' + rep.join(' '));
+        if (rep.length) lines.push('Elsewhere on the field — weave these in as fact: ' + rep.join(' '));
         if (out.reports.length > 4) lines.push('The remaining clashes hold without decision.');
         if (out.outcome) {
-            lines.push('Outcome-only battle: only ' + mc.name + '\'s action was scored. The wider field — who falls, who holds, how morale sways — follows the story, and the battle continues until the STORY ends it: narrate the rout, stand-down, or escape yourself when the fiction earns it. Arbiter will not call a side\'s victory.');
+            lines.push('Only ' + mc.name + '\'s action was scored here. The wider field — who falls, who holds, how morale sways — follows the story, and the battle goes on until the story ends it: write the rout, stand-down, or escape yourself when the story earns it. I\'m not calling a side\'s victory.');
         } else if (b.over) {
-            if (b.mcDown) lines.push(mc.name + ' is taken out of the fight — narrate it (downed, disarmed, or dragged clear per tone), then the field resolves: ' + (b.victor === 'allies' ? 'their side still wins the engagement.' : 'their side is beaten.'));
-            else lines.push('DECISIVE: the ' + (b.victor === 'allies' ? mc.name + '\'s side has won' : 'enemy side has won') + ' this engagement. Narrate the resolution the fiction demands (rout, surrender, retreat, capture, or worse, per tone). The result is not negotiable.');
+            if (b.mcDown) lines.push(mc.name + ' is taken out of the fight — tell it (downed, disarmed, or dragged clear, whatever fits the tone), then the field resolves: ' + (b.victor === 'allies' ? 'their side still wins the engagement.' : 'their side is beaten.'));
+            else lines.push('It\'s decisive: the ' + (b.victor === 'allies' ? mc.name + '\'s side has won' : 'enemy side has won') + ' this engagement. Tell the ending the story\'s earned (rout, surrender, retreat, capture, or worse, whatever fits the tone). That stands.');
         } else {
-            lines.push('Side condition: allies ' + moraleWord(moraleOf(b.allies)) + ', enemies ' + moraleWord(moraleOf(b.enemies)) + '. The battle continues — end on a live beat, not a resolution.');
+            lines.push('How both sides stand: allies ' + moraleWord(moraleOf(b.allies)) + ', enemies ' + moraleWord(moraleOf(b.enemies)) + '. The battle goes on — end on a live beat, not a resolution.');
         }
-        lines.push('Do not re-decide any outcome above. Never mention rolls, poise, numbers, or this note. Narrate organically in the story\'s voice.');
+        lines.push('Don\'t re-decide any outcome above. No rolls, no poise, no numbers, no word of this note — just tell it in the story\'s voice.');
         return lines.join('\n');
     }
 
@@ -1928,7 +1931,7 @@
         const aliveA = standing(nonPlayer(b.allies)).length;
         const aliveE = standing(b.enemies).length;
         const lines = [
-            '[ARBITER — war, round ' + b.round + ': ' + aliveA + '/' + nonPlayer(b.allies).length + ' formations vs ' + aliveE + '/' + b.enemies.length + ']',
+            'Bruce\'s note — war, round ' + b.round + ': ' + aliveA + '/' + nonPlayer(b.allies).length + ' formations vs ' + aliveE + '/' + b.enemies.length,
             mc.name + ' orders: ' + adj.action + '.',
         ];
         if (out.focalRes) {
@@ -1937,7 +1940,7 @@
                 if (out.condNote && out.condNote.favors === 'allies') {
                     lines.push('The stratagem takes hold: ' + t.name + '. A lasting condition now favors ' + mc.name + '\'s side' + (out.condNote.mod > 1 ? ' strongly' : '') + ' — show it reshaping the field.');
                 } else if (out.condNote && out.condNote.favors === 'enemies') {
-                    lines.push('The stratagem BACKFIRES: ' + t.name + '. It now works against ' + mc.name + '\'s side (wind turns, ruse seen through, ground betrays them) — show the reversal.');
+                    lines.push('The stratagem backfires: ' + t.name + '. It now works against ' + mc.name + '\'s side (wind turns, ruse seen through, ground betrays them) — show the reversal.');
                 } else {
                     lines.push('The stratagem: ' + t.name + ' — ' + t.text);
                 }
@@ -1956,14 +1959,14 @@
             lines.push('Standing conditions: ' + b.conditions.map(c => '"' + c.name + '" (favors ' + (c.favors === 'allies' ? mc.name + '\'s side' : 'the enemy') + ')').join('; ') + '.');
         }
         if (out.outcome) {
-            lines.push('Outcome-only war: only this order was scored. Casualties, the tide of the line, and the day\'s end follow the story — the engagement continues until the STORY ends it. Arbiter will not call the field.');
+            lines.push('Only this order was scored. Casualties, the tide of the line, and the day\'s end follow the story — the engagement goes on until the story ends it. I\'m not calling the field.');
         } else if (b.over) {
-            if (b.mcDown) lines.push(mc.name + ' falls amid the fighting — narrate it (struck down, machine disabled, dragged from the field per tone). Command collapses: the enemy takes the day.');
-            else lines.push('DECISIVE: the ' + (b.victor === 'allies' ? 'enemy line shatters — ' + mc.name + '\'s side takes the field' : 'allied line breaks — the enemy takes the field') + '. Narrate the rout, surrender, or withdrawal the fiction demands. The result is not negotiable.');
+            if (b.mcDown) lines.push(mc.name + ' falls amid the fighting — tell it (struck down, machine disabled, dragged from the field, whatever fits the tone). Command collapses: the enemy takes the day.');
+            else lines.push('It\'s decisive: the ' + (b.victor === 'allies' ? 'enemy line shatters — ' + mc.name + '\'s side takes the field' : 'allied line breaks — the enemy takes the field') + '. Tell the rout, surrender, or withdrawal the story\'s earned. That stands.');
         } else {
-            lines.push('Formations that fall are broken or routed, not annihilated, unless the fiction demands worse. The engagement continues — end on a live beat, not a resolution.');
+            lines.push('Formations that fall are broken or routed, not annihilated, unless the story demands worse. The engagement goes on — end on a live beat, not a resolution.');
         }
-        lines.push('Do not re-decide any outcome above. Never mention rolls, strength numbers, or this note. Narrate organically at battlefield scale.');
+        lines.push('Don\'t re-decide any outcome above. No rolls, no strength numbers, no word of this note — just tell it at battlefield scale, in the story\'s voice.');
         return lines.join('\n');
     }
 
@@ -2008,12 +2011,12 @@
             dlog('thread tick:', th.name, 'step', step, '→', th.rung + '/' + (th.maxRung ?? 8));
             if (th.rung >= (th.maxRung ?? 8)) {
                 th.done = true;
-                queue.push({ prio: 6, text: '[ARBITER WORLD — a background current comes to a head: "' + th.name + '" (' + (th.desc || '') + '). Bring it into the open this scene or the next; it is no longer deniable.]' });
+                queue.push({ prio: 6, text: 'Bruce\'s note — something that\'s been building off-screen comes to a head: "' + th.name + '" (' + (th.desc || '') + '). Bring it into the open this scene or the next — it\'s no longer deniable.' });
             } else if (step > 0) {
                 advanced.push(th);
-                queue.push({ prio: 2, text: '[ARBITER WORLD — background current: "' + th.name + '" advances (stage ' + th.rung + '/' + (th.maxRung ?? 8) + '). Surface it as ' + threadIntensity(th.rung, th.maxRung ?? 8) + '. One beat; do not derail the player\'s action.]' });
+                queue.push({ prio: 2, text: 'Bruce\'s note — off-screen, "' + th.name + '" moves forward (stage ' + th.rung + '/' + (th.maxRung ?? 8) + '). Let it surface as ' + threadIntensity(th.rung, th.maxRung ?? 8) + '. One beat; don\'t derail the player\'s action.' });
             } else {
-                queue.push({ prio: 2, text: '[ARBITER WORLD — background current: "' + th.name + '" suffers a setback (stage ' + th.rung + '/' + (th.maxRung ?? 8) + '). Show a hint of friction or reversal around it. One beat only.]' });
+                queue.push({ prio: 2, text: 'Bruce\'s note — off-screen, "' + th.name + '" hits a setback (stage ' + th.rung + '/' + (th.maxRung ?? 8) + '). Show a hint of friction or reversal around it. One beat only.' });
             }
         }
 
@@ -2025,7 +2028,7 @@
             const w = aWins ? a : b, l = aWins ? b : a;
             w.rung = clamp(w.rung + 1, 0, w.maxRung ?? 8);
             l.rung = clamp(l.rung - 1, 0, l.maxRung ?? 8);
-            queue.push({ prio: 5, text: '[ARBITER WORLD — collision of currents: "' + w.name + '" gains ground at the expense of "' + l.name + '". Let the friction between them show somewhere in this reply.]' });
+            queue.push({ prio: 5, text: 'Bruce\'s note — two off-screen threads collide: "' + w.name + '" gains ground at the expense of "' + l.name + '". Let the friction between them show somewhere in this reply.' });
         }
 
         // Engine tiers (NE-P numbers)
@@ -2037,7 +2040,7 @@
             let shift;
             if (Array.isArray(meta.worldSeeds) && meta.worldSeeds.length) shift = meta.worldSeeds.shift();
             else shift = WORLD_WHO[Math.floor(rng() * WORLD_WHO.length)] + ' ' + WORLD_WHAT[Math.floor(rng() * WORLD_WHAT.length)] + ', ' + WORLD_WHERE[Math.floor(rng() * WORLD_WHERE.length)];
-            queue.push({ prio: 4, text: '[ARBITER EVENT — seismic shift: ' + shift + '. Land it as news or rumor first unless the fiction puts it on top of the player; it must fit the setting\'s tone and scale.]' });
+            queue.push({ prio: 4, text: 'Bruce\'s note — the world shifts: ' + shift + '. Break it as news or rumor first unless the story puts it right on top of the player; it has to fit the setting\'s tone and scale.' });
         }
         const e = rollTier(eng.encounter.dc, ENGINE_DEFAULTS.encounter.sides, ENGINE_DEFAULTS.encounter.decay, ENGINE_DEFAULTS.encounter.dc0, rng);
         eng.encounter.dc = e.nextDC;
@@ -2047,14 +2050,14 @@
             if (Array.isArray(meta.encounterSeeds) && meta.encounterSeeds.length) type = meta.encounterSeeds.shift();
             else { const table = getEncounterTypes(); type = table[Math.floor(rng() * table.length)]; }
             const tone = ENCOUNTER_TONES[Math.floor(rng() * ENCOUNTER_TONES.length)];
-            queue.push({ prio: 3, text: '[ARBITER EVENT — a hook fires: ' + type + ' (' + tone + '). Introduce it as a real beat the player can engage or ignore. It must fit the current tone, genre, and scale of the scene — no forced combat, no genre breaks. If it calls for a new minor NPC, invent one concretely.]' });
+            queue.push({ prio: 3, text: 'Bruce\'s note — a hook fires: ' + type + ' (' + tone + '). Bring it in as a real beat the player can engage or ignore. It has to fit the current tone, genre, and scale of the scene — no forced combat, no genre breaks. If it calls for a new minor NPC, invent one concretely.' });
         }
         const su = rollTier(eng.surprise.dc, ENGINE_DEFAULTS.surprise.sides, ENGINE_DEFAULTS.surprise.decay, ENGINE_DEFAULTS.surprise.dc0, rng);
         eng.surprise.dc = su.nextDC;
         if (su.fired) {
             const type = EVENT_TYPES[Math.floor(rng() * EVENT_TYPES.length)];
             const tone = EVENT_TONES[Math.floor(rng() * EVENT_TONES.length)];
-            queue.push({ prio: 1, text: '[ARBITER EVENT HINT — weave one ambient beat into this reply: ' + type + ' (' + tone + '). Keep it subtle and true to the scene\'s tone; do not derail the player\'s action or force combat.]' });
+            queue.push({ prio: 1, text: 'Bruce\'s note — weave one ambient beat into this reply: ' + type + ' (' + tone + '). Keep it subtle and true to the scene\'s tone; don\'t derail the player\'s action or force combat.' });
         }
 
         if (!queue.length) return null;
@@ -2695,30 +2698,30 @@
         const strikeLines = res.steps.map(st => { const t = TIERS[st.tier] || TIERS.FAILURE; return '  • ' + st.strike + ' → ' + t.name; }).join('\n');
         const ov = TIERS[res.overall] || TIERS.FAILURE;
         const lines = [
-            '[ARBITER — duel, round ' + duel.round + ': ' + duel.player.name + ' commits to a combo]',
-            'Narrate the combo strike by strike, IN ORDER, honoring each result exactly:',
+            'Bruce\'s note — duel, round ' + duel.round + ': ' + duel.player.name + ' commits to a combo',
+            'Tell the combo strike by strike, in order, each result exactly as given:',
             strikeLines,
             'Taken together the exchange is a ' + ov.name + ' — ' + ov.text,
         ];
         lines.splice(3, 0, ...guardLines(adj, duel.player.name, duel.opp.name, res.overall));
         if (!res.outcome) lines.push(sideStatus(duel.opp) + '. ' + sideStatus(duel.player) + '.');
         if (res.outcome) {
-            lines.push('Outcome-only duel: no scores are kept — each exchange stands on its own verdict, and consequences persist only as the fiction carries them. The duel continues until the STORY ends it: when the accumulated outcomes make a yield, flight, interruption, or finish the honest next beat, narrate that ending yourself. Arbiter will not call a winner.');
+            lines.push('No scores are kept in this duel — each exchange stands on its own, and consequences last only as long as the story carries them. The duel goes on until the story ends it: when everything so far makes a yield, a flight, an interruption, or a finish the honest next beat, write that ending yourself. I\'m not calling a winner.');
         } else if (duel.over) {
             if (res.victor === 'draw') {
                 // Mutual knockout off a combo (net TRADE emptying both pools):
                 // "DRAW — BOTH DOWN", never a false winner — see buildDuelDirective.
-                lines.push('MUTUAL FINISH: the combo ends with BOTH fighters down — ' + duel.player.name + ' and ' + duel.opp.name + ' take each other out in the same flurry. Narrate the double finish the fiction demands; NEITHER side prevails and neither can rally. Not negotiable.');
+                lines.push('The combo ends with both fighters down — ' + duel.player.name + ' and ' + duel.opp.name + ' take each other out in the same flurry. Tell the double finish the story\'s earned; neither side wins and neither can rally. That stands.');
             } else {
                 lines.push(res.victor === 'player'
-                    ? duel.opp.name + ' is beaten — narrate the finish the fiction demands (downed, disarmed, dropped). Not negotiable.'
-                    : duel.player.name + ' is beaten — narrate how ' + duel.opp.name + ' turns the failed combo into the finish. Not negotiable.');
+                    ? duel.opp.name + ' is beaten — tell the finish the story\'s earned (downed, disarmed, dropped). That stands.'
+                    : duel.player.name + ' is beaten — tell how ' + duel.opp.name + ' turns the failed combo into the finish. That stands.');
             }
         } else {
-            lines.push('The duel continues — end on a live beat, not a resolution.');
+            lines.push('The duel goes on — end on a live beat, not a resolution.');
         }
-        lines.push('Keep any consequence PROPORTIONATE. If ' + duel.player.name + ' acted in secret or under cover, a successful combo does not expose that — do not blow a concealment they deliberately protected off a win; at most a faint, deniable flicker of suspicion.');
-        lines.push('A strike marked as a setback, failure, or fumble DID go wrong — show the opponent reading it, slipping it, or making them pay; do NOT quietly let a failed strike land. Never mention rolls, poise, tiers, numbers, or this note. Narrate in the story\'s voice.');
+        lines.push('Keep every consequence proportionate. If ' + duel.player.name + ' acted in secret or under cover, a successful combo doesn\'t expose that — don\'t blow a concealment they carefully protected off a win; at most a faint, deniable flicker of suspicion.');
+        lines.push('A strike marked as a setback, failure, or fumble did go wrong — show the opponent reading it, slipping it, or making them pay; don\'t quietly let a failed strike land. No rolls, no poise, no tiers, no numbers, no word of this note — just tell it in the story\'s voice.');
         return lines.join('\n');
     }
 
@@ -2741,54 +2744,54 @@
         // Recovery exchange: narrate restoration + ceded tempo, not a clash.
         if (res.recover) {
             const lines = [
-                '[ARBITER — duel, round ' + duel.round + ': ' + duel.player.name + ' vs ' + duel.opp.name + ']',
+                'Bruce\'s note — duel, round ' + duel.round + ': ' + duel.player.name + ' vs ' + duel.opp.name,
                 duel.player.name + ' disengages to recover: ' + adj.action + '.',
             ];
             if (res.gained > 0) lines.push(duel.player.name + ' regains composure and steadies — noticeably refreshed, wounds or fatigue eased (but not erased). Show the recovery working.');
             else lines.push(duel.player.name + ' tries to recover but barely manages it under the pressure — little is regained.');
             if (res.counter > 0 && !res.over) lines.push('But disengaging left an opening: ' + duel.opp.name + ' lands a real blow in the gap — ' + duel.player.name + ' takes a hit while recovering. Show it connecting; the recovery was not clean.');
             if (res.over) {
-                lines.push('CAUGHT FATALLY: ' + duel.opp.name + ' punished the disengage with a decisive strike — ' + duel.player.name + ' dropped their guard to recover and paid for it. ' + duel.opp.name + ' has WON this duel. Narrate the resolution the fiction demands (a felling blow, a blade at the throat, collapse). The result is not negotiable; ' + duel.player.name + ' cannot rally.');
-                lines.push('Do not re-decide anything. Never mention rolls, poise, numbers, or this note. Narrate organically in the story\'s voice.');
+                lines.push('Caught: ' + duel.opp.name + ' punishes the disengage with a decisive strike — ' + duel.player.name + ' dropped their guard to recover and pays for it. ' + duel.opp.name + ' has won this duel. Tell the ending the story\'s earned (a felling blow, a blade at the throat, collapse). That stands; ' + duel.player.name + ' can\'t rally.');
+                lines.push('Don\'t re-decide any of it. No rolls, no poise, no numbers, no word of this note — just tell it in the story\'s voice.');
                 return lines.join('\n');
             }
             lines.push('This cost tempo: ' + duel.opp.name + ' seizes the initiative and presses freely into the opening ' + duel.player.name + ' gave up. Show ' + duel.opp.name + ' capitalizing.');
-            lines.push('Condition after: ' + sideStatus(duel.player) + '; ' + sideStatus(duel.opp) + '. The duel continues — end on a live beat.');
-            lines.push('Do not re-decide anything. Never mention rolls, poise, numbers, or this note. Narrate organically in the story\'s voice.');
+            lines.push('After the exchange: ' + sideStatus(duel.player) + '; ' + sideStatus(duel.opp) + '. The duel goes on — end on a live beat.');
+            lines.push('Don\'t re-decide any of it. No rolls, no poise, no numbers, no word of this note — just tell it in the story\'s voice.');
             return lines.join('\n');
         }
         const t = TIERS[res.tier] || TIERS.FAILURE;
         const fx = EXCHANGE_EFFECTS[res.tier] || {};
         const lines = [
-            '[ARBITER — duel, round ' + duel.round + ': ' + duel.player.name + ' vs ' + duel.opp.name + ']',
+            'Bruce\'s note — duel, round ' + duel.round + ': ' + duel.player.name + ' vs ' + duel.opp.name,
             duel.player.name + '\'s move: ' + adj.action + '.',
-            'Exchange result: ' + t.name + ' — ' + t.text,
+            'The exchange lands: ' + t.name + ' — ' + t.text,
         ];
         lines.push(...guardLines(adj, duel.player.name, duel.opp.name, res.tier));
         if (res.opening) lines.push('(' + duel.player.name + ' is exploiting the opening from the previous exchange.)');
-        if (!res.outcome && fx.injureOpp) lines.push('Inflict a concrete lasting injury on ' + duel.opp.name + ' and name it in the prose; it visibly weakens them from now on.');
-        if (!res.outcome && fx.injureSelf && !(adj.playerGuard && !adj.counterPath)) lines.push('Inflict a concrete lasting injury on ' + duel.player.name + ' and name it in the prose; it visibly weakens them from now on.');
+        if (!res.outcome && fx.injureOpp) lines.push('Give ' + duel.opp.name + ' a real, lasting injury and name it in the prose — it visibly weakens them from here on.');
+        if (!res.outcome && fx.injureSelf && !(adj.playerGuard && !adj.counterPath)) lines.push('Give ' + duel.player.name + ' a real, lasting injury and name it in the prose — it visibly weakens them from here on.');
         if (!res.outcome && res.tier === 'SETBACK' && !duel.over) lines.push(duel.player.name + ' loses this exchange but spots a real opening to exploit next round — show it.');
         if (res.outcome) {
-            lines.push('Outcome-only duel: no scores are kept — each exchange stands on its own verdict, and consequences persist only as the fiction carries them.');
-            lines.push('The duel continues until the STORY ends it: when the accumulated outcomes make a yield, flight, interruption, or finish the honest next beat, narrate that ending yourself. Arbiter will not call a winner.');
+            lines.push('No scores are kept in this duel — each exchange stands on its own, and consequences last only as long as the story carries them.');
+            lines.push('The duel goes on until the story ends it: when everything so far makes a yield, a flight, an interruption, or a finish the honest next beat, write that ending yourself. I\'m not calling a winner.');
         } else if (duel.over) {
             if (duel.victor === 'draw') {
                 // Mutual knockout (a TRADE that emptied BOTH poise pools). The
                 // HUD shows "DRAW — BOTH DOWN"; the binding text must say the
                 // same — a binary winner/loser ternary here used to declare
                 // the OPPONENT the winner: a false, non-negotiable defeat.
-                lines.push('MUTUAL FINISH: ' + duel.player.name + ' and ' + duel.opp.name + ' have taken EACH OTHER out in the same exchange — both are down. Narrate the double finish the fiction demands (a final clash neither walks away from, both collapsing, per the story\'s tone). NEITHER side prevails and neither can rally; this duel has no winner. The result is not negotiable.');
+                lines.push('They take each other down in the same exchange — ' + duel.player.name + ' and ' + duel.opp.name + ' are both down. Tell the double finish the story\'s earned (a final clash neither walks away from, both collapsing, whatever fits the tone). Neither side wins, and neither can rally. That stands.');
             } else {
                 const winner = duel.victor === 'player' ? duel.player : duel.opp;
                 const loser = duel.victor === 'player' ? duel.opp : duel.player;
-                lines.push('DECISIVE POSITION: ' + loser.name + ' is beaten — ' + winner.name + ' has won this duel. Narrate the resolution the fiction demands (yield, knockout, disarm, retreat, or kill, per the story\'s tone). The result itself is not negotiable; the loser cannot rally.');
+                lines.push(loser.name + ' is beaten — ' + winner.name + ' takes the duel. Tell the ending the story\'s earned (yield, knockout, disarm, retreat, or kill, whatever fits the tone). That stands; the loser can\'t rally.');
             }
         } else {
-            lines.push('Condition after the exchange: ' + sideStatus(duel.player) + '; ' + sideStatus(duel.opp) + '. The duel continues — end on a live beat, not a resolution.');
+            lines.push('After the exchange: ' + sideStatus(duel.player) + '; ' + sideStatus(duel.opp) + '. The duel goes on — end on a live beat, not a resolution.');
         }
-        lines.push('Keep any consequence PROPORTIONATE to the result above. If ' + duel.player.name + ' acted in secret or under cover, this exchange does not automatically expose that — do not blow a concealment they deliberately protected unless the result was a real failure; a mere cost is at most a faint, deniable flicker of suspicion.');
-        lines.push('Do not re-decide the exchange or the duel. Never mention rolls, poise, numbers, or this note. Narrate organically in the story\'s voice.');
+        lines.push('Keep every consequence proportionate to the result above. If ' + duel.player.name + ' acted in secret or under cover, this exchange doesn\'t automatically expose that — don\'t blow a concealment they carefully protected unless the result was a real failure; a mere cost is at most a faint, deniable flicker of suspicion.');
+        lines.push('Don\'t re-decide the exchange or the duel. No rolls, no poise, no numbers, no word of this note — just tell it in the story\'s voice.');
         return lines.join('\n');
     }
 
@@ -2803,12 +2806,12 @@
     const GUARD_NEG_TIERS = { TRADE: 1, SETBACK: 1, FAILURE: 1, DISASTER: 1, SUCCESS_COST: 1 };
     function guardLines(adj, playerName, oppName, tier) {
         if (!adj || !adj.playerGuard) return [];
-        const out = ['Standing guard (established fiction): ' + adj.playerGuard + '.'];
+        const out = ['Standing guard, already established in the story: ' + adj.playerGuard + '.'];
         if (GUARD_NEG_TIERS[tier]) {
             if (adj.counterPath) {
-                out.push('Any toll or pressure on ' + playerName + ' this beat comes ONLY through this path — name it in the prose: ' + adj.counterPath + '. Never through direct contact the guard forbids.');
+                out.push('Any toll or pressure on ' + playerName + ' this beat comes only through this path — name it in the prose: ' + adj.counterPath + '. Never through contact the guard forbids.');
             } else {
-                out.push(oppName + ' has NO path through that guard this beat: do NOT narrate them landing direct contact or a wound. A bad result here is ' + playerName + '\'s OWN attempt failing — read, evaded, deflected, or stopped — and any cost is strain, lost footing, a jarred grip, or ceded tempo. The guard itself holds.');
+                out.push(oppName + ' has no way through that guard this beat — don\'t write them landing contact or a wound. A bad result here is ' + playerName + '\'s own attempt failing: read, evaded, deflected, or stopped. Any cost is strain, lost footing, a jarred grip, or ceded tempo. The guard holds.');
             }
         }
         return out;
@@ -2820,13 +2823,13 @@
     function buildArmedDirective(meta, adj) {
         const duel = meta.duel;
         const head = duel
-            ? '[ARBITER — duel joined: ' + duel.player.name + ' vs ' + duel.opp.name + ']'
-            : '[ARBITER — ' + (meta.battle && meta.battle.kind === 'war' ? 'war' : 'battle') + ' joined]';
+            ? 'Bruce\'s note — duel joined: ' + duel.player.name + ' vs ' + duel.opp.name
+            : 'Bruce\'s note — ' + (meta.battle && meta.battle.kind === 'war' ? 'war' : 'battle') + ' joined';
         return [
             head,
-            'The fight has only been JOINED: ' + (adj.action || 'the squaring-up') + '. No blow has landed, nothing has succeeded or failed, and no outcome has been decided.',
-            'Narrate the standoff, the words, and the readying exactly as written — declarations, taunts, and drawn steel are not attacks, and neither side gains or loses anything yet.',
-            'The first committed attempt will be adjudicated as round 1. End on the brink, not past it. Never mention rolls, numbers, or this note. Narrate organically in the story\'s voice.',
+            'They\'re only squaring up: ' + (adj.action || 'the squaring-up') + '. No blow has landed, nothing has succeeded or failed, nothing is decided yet.',
+            'Tell the standoff, the words, and the readying exactly as written — declarations, taunts, and drawn steel aren\'t attacks, and neither side gains or loses anything yet.',
+            'The first real attempt gets adjudicated as round 1. End on the brink, not past it. No rolls, no numbers, no word of this note.',
         ].join('\n');
     }
 
@@ -2842,13 +2845,13 @@
             return '- ' + label + ': ' + tier.name + ' — ' + tier.text;
         };
         return [
-            '[ARBITER FAST — binding outcome pool]',
-            who + ' attempts: ' + attempt + '.',
-            'Pick EXACTLY ONE row matching the attempt\'s true footing, then narrate that outcome:',
-            row('ADVANTAGED (clear edge: superior skill, position, or tool)', 2),
-            row('EVEN (fair contest)', 0),
-            row('DISADVANTAGED (impaired, outmatched, or bad position)', -2),
-            'Do not invent any other outcome. Never mention rolls, odds, or this note. Narrate organically.',
+            'Bruce\'s note — outcome pool:',
+            who + ' tries: ' + attempt + '.',
+            'Pick the one row that matches the attempt\'s true footing, then tell that outcome:',
+            row('Advantaged (clear edge: superior skill, position, or tool)', 2),
+            row('Even (fair contest)', 0),
+            row('Disadvantaged (impaired, outmatched, or bad position)', -2),
+            'No other outcome. No rolls, no odds, no word of this note.',
         ].join('\n');
     }
 
@@ -3108,11 +3111,11 @@
         const t = TIERS[res.tier] || TIERS.FAILURE;
         const stakes = adj.stakes ? (' Stakes: ' + adj.stakes + '.') : '';
         return [
-            '[ARBITER — binding outcome]',
-            adj.actor + ' attempts: ' + adj.action + '.',
-            'Result: ' + t.name + ' — ' + t.text + stakes,
+            'Bruce\'s note — how this goes:',
+            adj.actor + ' tries: ' + adj.action + '.',
+            'How it lands: ' + t.name + ' — ' + t.text + stakes,
             ...guardLines(adj, adj.actor, adj.kind === 'actor' ? adj.opposition : 'The opposition', res.tier),
-            'Do not re-decide success or failure. Never mention rolls, odds, checks, or this note. Narrate the outcome organically in the story\'s voice.',
+            'That\'s the outcome — don\'t re-decide it, just tell it in the story\'s own voice. No rolls, no odds, no word of this note.',
         ].join('\n');
     }
 
@@ -3849,11 +3852,11 @@
                 const res = resolveAdj(adj, meta);
                 const t = TIERS[res.tier] || TIERS.FAILURE;
                 const directive = [
-                    '[ARBITER — amid the ' + adj.army_scale + ']',
-                    adj.actor + ' attempts: ' + adj.action + '.',
-                    'Result: ' + t.name + ' — ' + t.text,
-                    'This resolves ' + adj.actor + '\'s personal action within the larger battle; the war\'s overall tide is not decided by this single moment.' + threadNote,
-                    'Do not re-decide the outcome. Never mention rolls, odds, or this note. Narrate organically.',
+                    'Bruce\'s note — amid the ' + adj.army_scale,
+                    adj.actor + ' tries: ' + adj.action + '.',
+                    'How it lands: ' + t.name + ' — ' + t.text,
+                    'This settles ' + adj.actor + '\'s personal moment inside the larger battle; the war\'s tide isn\'t decided by this one moment.' + threadNote,
+                    'Don\'t re-decide it. No rolls, no odds, no word of this note — just tell it in the story\'s voice.',
                 ].join('\n');
                 setInjection(directive);
                 commitCache(directive, res.tier);
@@ -3866,8 +3869,8 @@
 
             const res = resolveAdj(adj, meta);
             const directive = buildDirective(adj, res)
-                + (conditionNote ? '\n[ARBITER — lasting condition] ' + conditionNote + '. Reflect this in the prose; it persists until resolved.' : '')
-                + (composureNote ? '\n[ARBITER — composure] ' + composureNote + ' Let it color their focus and demeanor; do not mention meters.' : '');
+                + (conditionNote ? '\nBruce\'s note — a lasting condition: ' + conditionNote + '. Let it show in the prose; it lasts until it\'s resolved.' : '')
+                + (composureNote ? '\nBruce\'s note — state of mind: ' + composureNote + ' Let it color their focus and demeanor; no mention of meters.' : '');
             setInjection(directive);
 
             commitCache(directive, res.tier);
@@ -4518,7 +4521,10 @@
      *  blanket `m.history = []` destroyed. */
     function fightHistoryFilter(kind) {
         const isDuel = kind === 'duel';
-        const prefix = isDuel ? /^\s*\[ARBITER — duel/i : /^\s*\[ARBITER — (?:battle|war)/i;
+        // Legacy "[ARBITER — …]" headers AND current "Bruce's note — …" headers.
+        const prefix = isDuel
+            ? /^\s*(?:\[ARBITER — duel|Bruce's note — duel)/i
+            : /^\s*(?:\[ARBITER — (?:battle|war)|Bruce's note — (?:battle|war))/i;
         return (h) => {
             if (!h || typeof h !== 'object') return false;
             if (h.snap && (isDuel ? h.snap.d : h.snap.b)) return true;

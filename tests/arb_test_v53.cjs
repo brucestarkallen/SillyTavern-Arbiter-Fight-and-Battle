@@ -11,7 +11,7 @@
 //   - guard + counter_path: any toll on the player comes ONLY through that
 //     named path — the "how" LO asked for, in the prose.
 //   - guard + NO path: the opponent cannot land contact; a bad result is the
-//     player's OWN attempt failing (read, evaded, stopped) and costs are
+//     player's own attempt failing (read, evaded, stopped) and costs are
 //     strain/footing/tempo; forced-injury commands are suppressed; poise
 //     under an intact guard is fighting capacity, not flesh.
 //   - no guard: byte-identical to before.
@@ -78,36 +78,36 @@ const GUARD_NEG = ['TRADE', 'SETBACK', 'FAILURE', 'DISASTER', 'SUCCESS_COST'];
     const adjNoPath = { action: 'advance holding Infinity, strike through the narrowed veil', playerGuard: INFINITY, counterPath: null };
     const adjPath = Object.assign({}, adjNoPath, { counterPath: PATH });
     let dir = E.buildDuelDirective(meta, adjNoPath, { tier: 'FAILURE', opening: false });
-    ok('FAILURE + foreclosed guard: the failure is the player\'s OWN attempt', dir.includes('Standing guard (established fiction): ' + INFINITY) && dir.includes('has NO path through that guard') && dir.includes("OWN attempt failing") && dir.includes('The guard itself holds'));
-    ok('FAILURE + foreclosed guard: impossible contact is forbidden', dir.includes('do NOT narrate them landing direct contact or a wound'));
+    ok('FAILURE + foreclosed guard: the failure is the player\'s OWN attempt', dir.includes('Standing guard, already established in the story: ' + INFINITY) && dir.includes('has no way through that guard') && dir.includes("own attempt failing") && dir.includes('The guard holds'));
+    ok('FAILURE + foreclosed guard: impossible contact is forbidden', dir.includes("don't write them landing contact or a wound"));
     dir = E.buildDuelDirective(meta, adjNoPath, { tier: 'TRADE', opening: false });
-    ok('TRADE + foreclosed guard is scoped the same way (the original trace)', dir.includes('has NO path through that guard'));
+    ok('TRADE + foreclosed guard is scoped the same way (the original trace)', dir.includes('has no way through that guard'));
     dir = E.buildDuelDirective(meta, adjNoPath, { tier: 'DISASTER', opening: false });
-    ok('DISASTER + foreclosed guard: forced self-injury is suppressed', !dir.includes('Inflict a concrete lasting injury on Jovan Oda') && dir.includes('has NO path through that guard'));
+    ok('DISASTER + foreclosed guard: forced self-injury is suppressed', !dir.includes('Give Jovan Oda a real, lasting injury') && dir.includes('has no way through that guard'));
     dir = E.buildDuelDirective(meta, adjPath, { tier: 'DISASTER', opening: false });
-    ok('DISASTER + real path: the toll is licensed AND the path is named', dir.includes('Inflict a concrete lasting injury on Jovan Oda') && dir.includes('ONLY through this path') && dir.includes(PATH));
+    ok('DISASTER + real path: the toll is licensed AND the path is named', dir.includes('Give Jovan Oda a real, lasting injury') && dir.includes('only through this path') && dir.includes(PATH));
     dir = E.buildDuelDirective(meta, adjNoPath, { tier: 'SUCCESS', opening: false });
-    ok('a positive verdict shows the guard without opponent scoping', dir.includes('Standing guard') && !dir.includes('has NO path'));
+    ok('a positive verdict shows the guard without opponent scoping', dir.includes('Standing guard') && !dir.includes('has no way through'));
     dir = E.buildDuelDirective(meta, { action: 'a plain cut' }, { tier: 'FAILURE', opening: false });
     ok('no guard = byte-identical legacy directive (no guard lines)', !dir.includes('Standing guard'));
     const combo = E.buildDuelSequenceDirective(meta, Object.assign({}, adjNoPath), { steps: [{ strike: 'feint', tier: 'SUCCESS' }, { strike: 'cut', tier: 'FAILURE' }], overall: 'FAILURE', outcome: false, victor: null });
-    ok('combo directive carries the guard scoping', combo.includes('has NO path through that guard'));
+    ok('combo directive carries the guard scoping', combo.includes('has no way through that guard'));
     meta.duel = null;
 
     /* ── battle / war / single-check scoping ────────────────────────────── */
     E.startBattle(meta, ['Stella'], ['Bandit x2'], 'melee');
     let bd = E.buildBattleDirective(meta, adjNoPath, { mcRes: { tier: 'FAILURE', command: false }, reports: [] });
-    ok('battle fight verdicts are guard-scoped', bd.includes('has NO path through that guard'));
+    ok('battle fight verdicts are guard-scoped', bd.includes('has no way through that guard'));
     bd = E.buildBattleDirective(meta, adjNoPath, { mcRes: { tier: 'DISASTER', command: false }, reports: [] });
-    ok('battle: forced self-injury suppressed under a foreclosed guard', !bd.includes('Inflict a concrete lasting injury on Jovan Oda'));
+    ok('battle: forced self-injury suppressed under a foreclosed guard', !bd.includes('Give Jovan Oda a real, lasting injury'));
     meta.battle = null;
     E.startWar(meta, ['1st Lance'], ['Black Wing'], 'Warlord', 0);
     const tgt = meta.battle.enemies[0];
     const wd = E.buildWarDirective(meta, adjPath, { focalRes: { tier: 'FAILURE', personal: true }, reports: [], condNote: null, acting: null, target: tgt });
-    ok('war personal orders are guard-scoped with the named path', wd.includes('ONLY through this path') && wd.includes(PATH));
+    ok('war personal orders are guard-scoped with the named path', wd.includes('only through this path') && wd.includes(PATH));
     meta.battle = null;
     const sd = E.buildDirective(Object.assign({ actor: 'Jovan Oda', kind: 'actor', opposition: 'Kenpachi Zaraki', stakes: '' }, adjNoPath), { tier: 'FAILURE' });
-    ok('single checks are guard-scoped too, naming the opponent', sd.includes('Kenpachi Zaraki has NO path through that guard'));
+    ok('single checks are guard-scoped too, naming the opponent', sd.includes('Kenpachi Zaraki has no way through that guard'));
 
     /* ── E2E: LO\'s exact Infinity exchange through the real referee ─────── */
     meta = fresh();
@@ -115,8 +115,8 @@ const GUARD_NEG = ['TRADE', 'SETBACK', 'FAILURE', 'DISASTER', 'SUCCESS_COST'];
     respObj = JSON.stringify({ exchange: true, action: 'advance holding Infinity, strike through the narrowed veil', circumstance: 1, why: 'total defense maintained; his own strike must pass a narrowed gap', player_guard: INFINITY, counter_path: null });
     await I([um('I keep Infinity up, lower it only around my sword, and strike Zaraki [roll]', 'g1')], 0, () => {}, 'normal');
     const dr = meta.cache.directive;
-    ok('E2E: the directive carries the standing guard', dr.includes('Standing guard (established fiction): ' + INFINITY));
-    ok('E2E: negative outcomes are scoped, positive ones left free', GUARD_NEG.includes(meta.cache.tier) ? dr.includes('has NO path through that guard') : !dr.includes('has NO path'));
+    ok('E2E: the directive carries the standing guard', dr.includes('Standing guard, already established in the story: ' + INFINITY));
+    ok('E2E: negative outcomes are scoped, positive ones left free', GUARD_NEG.includes(meta.cache.tier) ? dr.includes('has no way through that guard') : !dr.includes('has no way through'));
     ok('E2E: the log records guard held with no counter path', meta.log.length === 1 && meta.log[0].guard === INFINITY && meta.log[0].path === undefined);
 
     console.log(fails ? 'SUITE FAILED (' + fails + ')' : 'ALL v53 GUARD INVARIANTS GREEN');

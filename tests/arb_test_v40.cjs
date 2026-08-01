@@ -15,7 +15,7 @@ let fails = 0; const ok = (n, c) => { console.log(n + ':', c ? 'OK' : 'FAIL'); i
 // ── Tier text: proportionate + protects concealment ──
 const sc = E.TIERS.SUCCESS_COST.text.toLowerCase();
 ok('SUCCESS_COST frames the cost as proportionate (a tax, not a reversal)', /proportionate/.test(sc) && /reversal/.test(sc) && /small tax/.test(sc));
-ok('SUCCESS_COST forbids blowing a secret/cover/concealment on a win', /secret|cover|conceal/.test(sc) && /do not/.test(sc));
+ok('SUCCESS_COST forbids blowing a secret/cover/concealment on a win', /secret|cover|conceal/.test(sc) && /don'?t blow/.test(sc));
 ok('SUCCESS_COST routes full exposure to a worse result (setback-or-worse)', /setback/.test(sc));
 
 // ── Duel directive carries the concealment guard on a continuing exchange ──
@@ -25,7 +25,7 @@ const mkMeta = (tier) => ({ duel: { active: true, over: false, victor: null, rou
 const adj = { action: 'secretly disrupt his cast', circumstance: 1 };
 const dir = E.buildDuelDirective(mkMeta('SUCCESS_COST'), adj, { tier: 'SUCCESS_COST', opening: false });
 ok('duel directive tells the storyteller to keep consequences proportionate', /proportionate/i.test(dir));
-ok('duel directive protects a secret/under-cover action from auto-exposure', /secret|under cover/i.test(dir) && /do not blow|does not automatically expose/i.test(dir));
+ok('duel directive protects a secret/under-cover action from auto-exposure', /secret|under cover/i.test(dir) && /don'?t blow|doesn'?t automatically expose/i.test(dir));
 
 // A clean win (no cost) still shouldn't invent exposure — the guard is present regardless of tier.
 const dirWin = E.buildDuelDirective(mkMeta('SUCCESS'), adj, { tier: 'SUCCESS', opening: false });

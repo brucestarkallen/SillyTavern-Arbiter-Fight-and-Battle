@@ -36,9 +36,9 @@ const freshMeta = (extra={}) => { md.arbiter = Object.assign({ sheet:{actors:{'J
   freshMeta();
   respObj = JSON.stringify({ check:true, action:'leap the chasm', domain:'athletics', actor:'Jovan', opposition_kind:'tier', opposition:'hard', circumstance:0, why:'wide gap', stakes:'a fall' });
   inj = await send('I leap across the chasm', 'b1');
-  ok('single check → directive injected', inj.includes('[ARBITER'));
+  ok('single check → directive injected', inj.includes("Bruce's note"));
   ok('single check → carries a named outcome tier', /(DECISIVE|SUCCESS|SETBACK|FAILURE|DISASTER)/.test(inj));
-  ok('single check → instructs storyteller not to reveal the note', /Never mention/i.test(inj));
+  ok('single check → instructs storyteller not to reveal the note', /no word of this note/i.test(inj));
   ok('single check → NO mechanical leak', !LEAK.test(inj));
 
   // C) Duel start.
@@ -55,14 +55,14 @@ const freshMeta = (extra={}) => { md.arbiter = Object.assign({ sheet:{actors:{'J
   inj = await send('I press the attack fiercely', 'd1');
   ok('exchange → duel round advanced', md.arbiter.duel && md.arbiter.duel.round === r0 + 1);
   ok('exchange → opponent nerve tracked (composure fell)', md.arbiter.duel.opp.composure < 6);
-  ok('exchange → directive qualitative, no leak', inj.includes('[ARBITER') && !LEAK.test(inj));
+  ok('exchange → directive qualitative, no leak', inj.includes("Bruce's note") && !LEAK.test(inj));
   const rAfterD = md.arbiter.duel.round;
 
   // E) SWIPE the same message → fate must NOT re-roll or advance.
   injections = {}; md.arbiter.oneShot = null;
   await I([{ is_user:true, mes:'I press the attack fiercely', send_date:'d1' }], 0, ()=>{}, 'swipe');
   ok('swipe (same message) → round does NOT advance (fate is stable)', md.arbiter.duel.round === rAfterD);
-  ok('swipe → the committed directive is replayed', mainInj().includes('[ARBITER'));
+  ok('swipe → the committed directive is replayed', mainInj().includes("Bruce's note"));
 
   // F) EDIT the message (same send_date, new text) → rewind pre-turn + fresh roll (no double-apply).
   const poiseBeforeEdit = md.arbiter.duel.opp.poise;
@@ -70,7 +70,7 @@ const freshMeta = (extra={}) => { md.arbiter = Object.assign({ sheet:{actors:{'J
   respObj = JSON.stringify({ exchange:true, move_kind:'attack', target:'Ogre', action:'a different strike', circumstance:0, why:'x' });
   await I([{ is_user:true, mes:'I try a different strike instead', send_date:'d1' }], 0, ()=>{}, 'swipe');
   ok('edit (same send_date, new action) → round stays put (rewound, not stacked)', md.arbiter.duel.round === rAfterD);
-  ok('edit → still produces a fresh directive', mainInj().includes('[ARBITER'));
+  ok('edit → still produces a fresh directive', mainInj().includes("Bruce's note"));
 
   // G) Fight to the finish, then a NEW message clears it and flags a re-seed.
   freshMeta({ duel: { active:true, over:false, victor:null, round:1, domain:'melee',
@@ -98,14 +98,14 @@ const freshMeta = (extra={}) => { md.arbiter = Object.assign({ sheet:{actors:{'J
   respObj = JSON.stringify({ check:true, action:'charge the guards', domain:'melee', actor:'Jovan', opposition_kind:'actor', opposition:'Guards', circumstance:0, battle_start:{ allies:['Ksenia'], enemies:['Guard x3'] } });
   inj = await send('I charge into the three guards', 'i1');
   ok('battle_start → battle created', !!md.arbiter.battle && md.arbiter.battle.active);
-  ok('battle directive qualitative, no leak', inj.includes('[ARBITER') && !LEAK.test(inj));
+  ok('battle directive qualitative, no leak', inj.includes("Bruce's note") && !LEAK.test(inj));
 
   // J) War start.
   freshMeta();
   respObj = JSON.stringify({ check:true, action:'order the flank to envelop', domain:'tactics', actor:'Jovan', opposition_kind:'actor', opposition:'Legion', circumstance:0, war_start:{ allies:['Left Flank','3rd Cavalry'], enemies:['Iron Legion'], enemy_commander:'Warlord' } });
   inj = await send('I command my forces to envelop their flank', 'j1');
   ok('war_start → war created', !!md.arbiter.battle && md.arbiter.battle.kind === 'war');
-  ok('war directive qualitative, no leak', inj.includes('[ARBITER') && !LEAK.test(inj));
+  ok('war directive qualitative, no leak', inj.includes("Bruce's note") && !LEAK.test(inj));
 
   // K) FAST MODE: a duel exchange with zero LLM calls.
   settings.arbiter.mode = 'fast';
@@ -115,7 +115,7 @@ const freshMeta = (extra={}) => { md.arbiter = Object.assign({ sheet:{actors:{'J
     opp:{name:'Bandit',rating:5,poise:5,maxPoise:5,injuries:0,momentum:0,opening:false,composure:6,composureMax:6} } });
   inj = await send('I swing hard at the bandit', 'k1');
   ok('fast mode → resolves with ZERO LLM calls', llmCalls === 0);
-  ok('fast mode duel → directive injected, no leak', inj.includes('[ARBITER') && !LEAK.test(inj));
+  ok('fast mode duel → directive injected, no leak', inj.includes("Bruce's note") && !LEAK.test(inj));
   settings.arbiter.mode = 'adjudicated';
 
   // L) GLOBAL leak scan across every directive captured this run.

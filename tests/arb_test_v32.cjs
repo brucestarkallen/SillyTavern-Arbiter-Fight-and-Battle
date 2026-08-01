@@ -67,7 +67,7 @@ const isWin = (tier) => tier === 'DECISIVE' || tier === 'SUCCESS' || tier === 'S
   freshDuel(0);
   let dir = await send('I disengage and drink a healing potion, catching my breath.');
   ok('fast-mode recovery routes to the recovery directive', /disengages to recover/.test(dir));
-  ok('fast-mode recovery is NOT an attack exchange', !/Exchange result:/.test(dir));
+  ok('fast-mode recovery is NOT an attack exchange', !/The exchange lands:/.test(dir));
   // Recovery heals the player. Against a real threat the free counter can
   // outweigh a poor heal (by design — no risk-free heal loop), so to prove a
   // heal actually fires we isolate it against a weak foe (rating 2 → no
@@ -79,7 +79,7 @@ const isWin = (tier) => tier === 'DECISIVE' || tier === 'SUCCESS' || tier === 'S
 
   freshDuel(0);
   dir = await send('I strike at Kael with my blade.');
-  ok('fast-mode attack routes to an exchange directive', /Exchange result:/.test(dir));
+  ok('fast-mode attack routes to an exchange directive', /The exchange lands:/.test(dir));
   ok('fast-mode attack is NOT a recovery', !/disengages to recover/.test(dir));
 
   // ── C. Scale mismatch still feeds the fast-mode delta (read off the duel) ──

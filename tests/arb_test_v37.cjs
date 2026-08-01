@@ -48,7 +48,7 @@ const engines = (fire) => ({
 
   m = { tickCount: 5, threads: [], engines: engines('world'), encounterSeeds: [], worldSeeds: [] };
   beat = E.backgroundTick(m);
-  ok('world falls back to the generic table when the pool is empty', beat && beat.includes('seismic shift:'));
+  ok('world falls back to the generic table when the pool is empty', beat && beat.includes('the world shifts:'));
 
   // Nothing fires → no beat, pools untouched.
   m = { tickCount: 5, threads: [], engines: engines('none'), encounterSeeds: ['keep me'], worldSeeds: ['keep me too'] };

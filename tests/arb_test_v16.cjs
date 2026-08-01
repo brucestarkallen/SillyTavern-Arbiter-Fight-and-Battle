@@ -35,7 +35,7 @@ ok('stratagem conditions net to zero on a balanced win/loss record', (() => {
   ok('formations built (2 allies + player, 3 enemies)', b && b.allies.length === 3 && b.enemies.length === 3);
   ok('sheet ratings honored (Zero Squadron r7 s12)', b && b.allies.some(u => u.name === 'Zero Squadron' && u.rating === 7 && u.maxPoise === 12));
   ok('commander tactics from sheet (10)', b && b.cmdA === 10);
-  ok('war directive injected', injected.includes('[ARBITER — war, round 1'));
+  ok('war directive injected', injected.includes("Bruce's note — war, round 1"));
 
   // 3. Fast-mode war fought to conclusion (no LLM), commander edge 10 vs 5
   settings.arbiter.mode = 'fast';

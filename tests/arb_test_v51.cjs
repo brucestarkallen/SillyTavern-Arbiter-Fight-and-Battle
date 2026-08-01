@@ -88,10 +88,10 @@ const fullPoise = (u) => u.poise === u.maxPoise;
 
     /* ── 4. directives: storyteller ends it; no beaten/forced injuries ──── */
     const dirDecisive = E.buildDuelDirective(meta, { action: 'a perfect riposte' }, { tier: 'DECISIVE', outcome: true, opening: false });
-    ok('duel directive hands the ending to the storyteller', dirDecisive.includes('until the STORY ends it') && dirDecisive.includes('will not call a winner'));
+    ok('duel directive hands the ending to the storyteller', dirDecisive.includes('until the story ends it') && dirDecisive.includes('not calling a winner'));
     ok('no engine finish or forced injury — even on DECISIVE', !dirDecisive.includes('DECISIVE POSITION') && !dirDecisive.includes('is beaten') && !dirDecisive.includes('Inflict a concrete lasting injury'));
     const comboDir = E.buildDuelSequenceDirective(meta, { action: 'a three-strike chain' }, combo);
-    ok('combo directive also hands the ending to the storyteller', comboDir.includes('until the STORY ends it') && !comboDir.includes('is beaten'));
+    ok('combo directive also hands the ending to the storyteller', comboDir.includes('until the story ends it') && !comboDir.includes('is beaten'));
 
     /* ── 5. composure is nerve, not health — still shapes odds ──────────── */
     meta.composure = 6;
@@ -113,7 +113,7 @@ const fullPoise = (u) => u.poise === u.maxPoise;
     ok('no unit takes damage or breaks', b.allies.every(u => fullPoise(u) && u.standing) && b.enemies.every(u => fullPoise(u) && u.standing));
     ok('no rout, no victor, no MC-down — rounds still count', !b.over && !b.victor && !b.mcDown && b.round === 2);
     const bDir = E.buildBattleDirective(meta, { action: 'cut through' }, fight);
-    ok('battle directive hands the field and the ending to the storyteller', bDir.includes('until the STORY ends it') && !bDir.includes('DECISIVE:') && !bDir.includes('Inflict a concrete lasting injury'));
+    ok('battle directive hands the field and the ending to the storyteller', bDir.includes('until the story ends it') && !bDir.includes('DECISIVE:') && !bDir.includes('Inflict a concrete lasting injury'));
 
     /* ── 7. war: orders scored; strengths, conditions, collapse frozen ──── */
     meta = fresh();
@@ -128,7 +128,7 @@ const fullPoise = (u) => u.poise === u.maxPoise;
     ok('army strengths never move', strengthOf(w.allies) === a0 && strengthOf(w.enemies) === e0);
     ok('no conditions accrue, no line collapses, no victor', !(w.conditions && w.conditions.length) && !w.over && !w.victor && w.round === 3);
     const wDir = E.buildWarDirective(meta, { action: 'flank the ridge' }, man);
-    ok('war directive hands the field to the storyteller', wDir.includes('until the STORY ends it') && !wDir.includes('DECISIVE:'));
+    ok('war directive hands the field to the storyteller', wDir.includes('until the story ends it') && !wDir.includes('DECISIVE:'));
 
     /* ── 8. the storyteller's end still ends it (via the real referee) ──── */
     meta = fresh();

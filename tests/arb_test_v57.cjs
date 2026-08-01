@@ -65,18 +65,18 @@ const lastPrompt = (key) => { for (let i = promptCalls.length - 1; i >= 0; i--) 
             round: 3, domain: 'melee', over: true, victor: 'draw',
         };
         const d1 = E.buildDuelDirective(meta, { action: 'final clash', circumstance: 0 }, { P: 0.5, tier: 'TRADE', outcome: false });
-        ok('single-exchange draw: MUTUAL FINISH present', /MUTUAL FINISH/.test(d1));
+        ok('single-exchange draw: MUTUAL FINISH present', /take each other down/.test(d1));
         ok('single-exchange draw: no false winner ("has won this duel" absent)', !/has won this duel/.test(d1));
         ok('single-exchange draw: nobody "is beaten"', !/is beaten/.test(d1));
-        ok('single-exchange draw: still binding ("not negotiable")', /not negotiable/.test(d1));
+        ok('single-exchange draw: still binding ("That stands")', /That stands/.test(d1));
 
         meta.duel.victor = 'opp';
         const d1b = E.buildDuelDirective(meta, { action: 'final clash', circumstance: 0 }, { P: 0.5, tier: 'FAILURE', outcome: false });
-        ok('normal defeat unchanged: winner declared', /has won this duel/.test(d1b) && /is beaten/.test(d1b));
+        ok('normal defeat unchanged: winner declared', /takes the duel/.test(d1b) && /is beaten/.test(d1b));
 
         meta.duel.victor = 'draw';
         const d2 = E.buildDuelSequenceDirective(meta, { action: 'flurry', circumstance: 0 }, { steps: [{ strike: 'lunge', tier: 'SUCCESS' }, { strike: 'riposte', tier: 'FAILURE' }], overall: 'TRADE', over: true, victor: 'draw', P: 0.5, outcome: false });
-        ok('sequence draw: MUTUAL FINISH present', /MUTUAL FINISH/.test(d2));
+        ok('sequence draw: MUTUAL FINISH present', /take each other out|both fighters down/.test(d2));
         // sideStatus still reports both fighters as beaten — correct for a
         // mutual KO; the invariant is that no SINGLE winner is declared.
         ok('sequence draw: no single winner declared', !/has won this duel/.test(d2) && !/turns the failed combo into the finish/.test(d2));
@@ -156,7 +156,7 @@ const lastPrompt = (key) => { for (let i = promptCalls.length - 1; i >= 0; i--) 
         Object.defineProperty(globalThis, 'crypto', cryptoDesc);
         rawStub = null;
         ok('duel armed this turn', md.arbiter.duel && md.arbiter.duel.opp.name === 'Guard');
-        ok('fight directive injected', (lastPrompt('ARBITER_OUTCOME') || '').startsWith('[ARBITER — duel joined'));
+        ok('fight directive injected', (lastPrompt('ARBITER_OUTCOME') || '').startsWith("Bruce's note — duel joined"));
         ok('ambient event injection suppressed on fight-opening turn', lastPrompt('ARBITER_OUTCOME_EVENT') === '');
         ok('eventCache for this turn dropped (swipes stay clean)', md.arbiter.eventCache === undefined);
         ok('committed entry carries no eventText', md.arbiter.history.length === 1 && md.arbiter.history[0].eventText === null);

@@ -20,7 +20,7 @@ const freshBattle = () => ({ active: true, over: false, victor: null, mcDown: fa
   while (!md.arbiter.battle?.over && rounds < 15) {
     injections.ARBITER_OUTCOME = '';
     await I([{ is_user: true, mes: 'I press the attack', send_date: 'b' + rounds }], 0, () => {}, 'normal');
-    if (String(injections.ARBITER_OUTCOME).includes('[ARBITER — battle, round')) sawDirective = true;
+    if (String(injections.ARBITER_OUTCOME).includes("Bruce's note — battle, round")) sawDirective = true;
     rounds++;
   }
   const b = md.arbiter.battle;
