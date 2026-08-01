@@ -156,7 +156,7 @@ const lastPrompt = (key) => { for (let i = promptCalls.length - 1; i >= 0; i--) 
         Object.defineProperty(globalThis, 'crypto', cryptoDesc);
         rawStub = null;
         ok('duel armed this turn', md.arbiter.duel && md.arbiter.duel.opp.name === 'Guard');
-        ok('fight directive injected', (lastPrompt('ARBITER_OUTCOME') || '').startsWith("Bruce's note — duel joined"));
+        ok('fight directive injected', (lastPrompt('ARBITER_OUTCOME') || '').startsWith("Author's note — duel joined"));
         ok('ambient event injection suppressed on fight-opening turn', lastPrompt('ARBITER_OUTCOME_EVENT') === '');
         ok('eventCache for this turn dropped (swipes stay clean)', md.arbiter.eventCache === undefined);
         ok('committed entry carries no eventText', md.arbiter.history.length === 1 && md.arbiter.history[0].eventText === null);

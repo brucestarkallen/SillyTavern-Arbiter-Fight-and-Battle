@@ -18,7 +18,7 @@ let fails = 0; const ok = (n, c) => { console.log(n + ':', c ? 'OK' : 'FAIL'); i
   await I([{ is_user: true, mes: 'I sweep the vines through all the guards', send_date: 'm1' }], 0, () => {}, 'normal');
   ok('multi-target attack opened a battle', md.arbiter.battle && md.arbiter.battle.active);
   ok('generic squad spawned (3 enemies)', md.arbiter.battle && md.arbiter.battle.enemies.length === 3);
-  ok('battle directive injected', injected.includes("Bruce's note — battle"));
+  ok('battle directive injected', injected.includes("Jovan's note — battle"));
 
   // Army-scale -> thread created, personal action still resolves, no battle
   md.arbiter = { sheet:{actors:{'Jovan':{default:8,domains:{ice:10}}}}, log:[], oneShot:null, cache:null, engines:{surprise:{dc:999},encounter:{dc:999},world:{dc:999}}, tickCount:0, threads:[] };

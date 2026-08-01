@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.40.1';
+    const VERSION = '0.41.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
     // Committed-turn history depth: how many resolved player turns keep a
@@ -559,7 +559,7 @@
         adjIncludeHidden: false,  // include ST-hidden ("ghosted") messages too (Arbiter's own directives are always excluded)
         sensitivity: 'normal',    // conservative | normal | aggressive
         injectDepth: 0,
-        injectRole: 'user',       // system | user | assistant — 'user' default: the note reads as Bruce speaking, not a system injection
+        injectRole: 'user',       // system | user | assistant — 'user' default: the note reads as the player speaking, not a system injection
         defaultRating: 5,         // rating when an actor/domain is unknown
         toastResults: true,
         showMath: false,          // include the math line in the toast
@@ -682,6 +682,19 @@
         const m = meta || getMeta();
         const v = m && typeof m.mcName === 'string' ? m.mcName.trim() : '';
         return v || ctx().name1 || 'Player';
+    }
+
+    /** The injection voice: every directive reads as a note from the human
+     *  player, so it speaks with their persona name. ST's unset persona
+     *  defaults are literally "User"/"Player" — role-words that read as corpo
+     *  to a defensive storyteller persona — so those fall back to the
+     *  universal fiction convention: the author's note. */
+    function noteLabel() {
+        try {
+            const n = String(ctx().name1 || '').trim();
+            if (n && n.toLowerCase() !== 'user' && n.toLowerCase() !== 'player') return n + "'s note";
+        } catch (_) {}
+        return "Author's note";
     }
 
     /** Every name that means "the player": the story name plus, when it
@@ -1028,9 +1041,11 @@
     // Arbiter's own injected directives can surface as messages in some setups;
     // never feed them back to the referee (it would be grading its own output).
     // Recognizes BOTH the legacy "[ARBITER …]" header and the current
-    // "Bruce's note" header, so directives committed before the voice change
-    // are still filtered out of referee transcripts.
-    const isArbiterLine = (m) => typeof m.mes === 'string' && /^\s*(?:\[ARBITER|Bruce's note)/i.test(m.mes);
+    // "<name>'s note" header (ANY persona name or the Author's-note fallback —
+    // history outlives persona renames), so directives committed before the
+    // voice change or under another name are still filtered out of referee
+    // transcripts.
+    const isArbiterLine = (m) => typeof m.mes === 'string' && /^\s*(?:\[ARBITER|[^\n]{0,42}'s note)/i.test(m.mes);
 
     function compactRecent(chat, n, excludeMes, includeHidden) {
         const out = [];
@@ -1606,7 +1621,7 @@
         const b = meta.battle;
         const mc = b.allies.find(u => u.isPlayer);
         const lines = [
-            'Bruce\'s note — battle, round ' + b.round + ': ' + standing(b.allies).length + '/' + b.allies.length + ' vs ' + standing(b.enemies).length + '/' + b.enemies.length,
+            noteLabel() + ' — battle, round ' + b.round + ': ' + standing(b.allies).length + '/' + b.allies.length + ' vs ' + standing(b.enemies).length + '/' + b.enemies.length,
         ];
         if (out.mcRes) {
             const t = TIERS[out.mcRes.tier] || TIERS.FAILURE;
@@ -1931,7 +1946,7 @@
         const aliveA = standing(nonPlayer(b.allies)).length;
         const aliveE = standing(b.enemies).length;
         const lines = [
-            'Bruce\'s note — war, round ' + b.round + ': ' + aliveA + '/' + nonPlayer(b.allies).length + ' formations vs ' + aliveE + '/' + b.enemies.length,
+            noteLabel() + ' — war, round ' + b.round + ': ' + aliveA + '/' + nonPlayer(b.allies).length + ' formations vs ' + aliveE + '/' + b.enemies.length,
             mc.name + ' orders: ' + adj.action + '.',
         ];
         if (out.focalRes) {
@@ -2011,12 +2026,12 @@
             dlog('thread tick:', th.name, 'step', step, '→', th.rung + '/' + (th.maxRung ?? 8));
             if (th.rung >= (th.maxRung ?? 8)) {
                 th.done = true;
-                queue.push({ prio: 6, text: 'Bruce\'s note — something that\'s been building off-screen comes to a head: "' + th.name + '" (' + (th.desc || '') + '). Bring it into the open this scene or the next — it\'s no longer deniable.' });
+                queue.push({ prio: 6, text: noteLabel() + ' — something that\'s been building off-screen comes to a head: "' + th.name + '" (' + (th.desc || '') + '). Bring it into the open this scene or the next — it\'s no longer deniable.' });
             } else if (step > 0) {
                 advanced.push(th);
-                queue.push({ prio: 2, text: 'Bruce\'s note — off-screen, "' + th.name + '" moves forward (stage ' + th.rung + '/' + (th.maxRung ?? 8) + '). Let it surface as ' + threadIntensity(th.rung, th.maxRung ?? 8) + '. One beat; don\'t derail the player\'s action.' });
+                queue.push({ prio: 2, text: noteLabel() + ' — off-screen, "' + th.name + '" moves forward (stage ' + th.rung + '/' + (th.maxRung ?? 8) + '). Let it surface as ' + threadIntensity(th.rung, th.maxRung ?? 8) + '. One beat; don\'t derail the player\'s action.' });
             } else {
-                queue.push({ prio: 2, text: 'Bruce\'s note — off-screen, "' + th.name + '" hits a setback (stage ' + th.rung + '/' + (th.maxRung ?? 8) + '). Show a hint of friction or reversal around it. One beat only.' });
+                queue.push({ prio: 2, text: noteLabel() + ' — off-screen, "' + th.name + '" hits a setback (stage ' + th.rung + '/' + (th.maxRung ?? 8) + '). Show a hint of friction or reversal around it. One beat only.' });
             }
         }
 
@@ -2028,7 +2043,7 @@
             const w = aWins ? a : b, l = aWins ? b : a;
             w.rung = clamp(w.rung + 1, 0, w.maxRung ?? 8);
             l.rung = clamp(l.rung - 1, 0, l.maxRung ?? 8);
-            queue.push({ prio: 5, text: 'Bruce\'s note — two off-screen threads collide: "' + w.name + '" gains ground at the expense of "' + l.name + '". Let the friction between them show somewhere in this reply.' });
+            queue.push({ prio: 5, text: noteLabel() + ' — two off-screen threads collide: "' + w.name + '" gains ground at the expense of "' + l.name + '". Let the friction between them show somewhere in this reply.' });
         }
 
         // Engine tiers (NE-P numbers)
@@ -2040,7 +2055,7 @@
             let shift;
             if (Array.isArray(meta.worldSeeds) && meta.worldSeeds.length) shift = meta.worldSeeds.shift();
             else shift = WORLD_WHO[Math.floor(rng() * WORLD_WHO.length)] + ' ' + WORLD_WHAT[Math.floor(rng() * WORLD_WHAT.length)] + ', ' + WORLD_WHERE[Math.floor(rng() * WORLD_WHERE.length)];
-            queue.push({ prio: 4, text: 'Bruce\'s note — the world shifts: ' + shift + '. Break it as news or rumor first unless the story puts it right on top of the player; it has to fit the setting\'s tone and scale.' });
+            queue.push({ prio: 4, text: noteLabel() + ' — the world shifts: ' + shift + '. Break it as news or rumor first unless the story puts it right on top of the player; it has to fit the setting\'s tone and scale.' });
         }
         const e = rollTier(eng.encounter.dc, ENGINE_DEFAULTS.encounter.sides, ENGINE_DEFAULTS.encounter.decay, ENGINE_DEFAULTS.encounter.dc0, rng);
         eng.encounter.dc = e.nextDC;
@@ -2050,14 +2065,14 @@
             if (Array.isArray(meta.encounterSeeds) && meta.encounterSeeds.length) type = meta.encounterSeeds.shift();
             else { const table = getEncounterTypes(); type = table[Math.floor(rng() * table.length)]; }
             const tone = ENCOUNTER_TONES[Math.floor(rng() * ENCOUNTER_TONES.length)];
-            queue.push({ prio: 3, text: 'Bruce\'s note — a hook fires: ' + type + ' (' + tone + '). Bring it in as a real beat the player can engage or ignore. It has to fit the current tone, genre, and scale of the scene — no forced combat, no genre breaks. If it calls for a new minor NPC, invent one concretely.' });
+            queue.push({ prio: 3, text: noteLabel() + ' — a hook fires: ' + type + ' (' + tone + '). Bring it in as a real beat the player can engage or ignore. It has to fit the current tone, genre, and scale of the scene — no forced combat, no genre breaks. If it calls for a new minor NPC, invent one concretely.' });
         }
         const su = rollTier(eng.surprise.dc, ENGINE_DEFAULTS.surprise.sides, ENGINE_DEFAULTS.surprise.decay, ENGINE_DEFAULTS.surprise.dc0, rng);
         eng.surprise.dc = su.nextDC;
         if (su.fired) {
             const type = EVENT_TYPES[Math.floor(rng() * EVENT_TYPES.length)];
             const tone = EVENT_TONES[Math.floor(rng() * EVENT_TONES.length)];
-            queue.push({ prio: 1, text: 'Bruce\'s note — weave one ambient beat into this reply: ' + type + ' (' + tone + '). Keep it subtle and true to the scene\'s tone; don\'t derail the player\'s action or force combat.' });
+            queue.push({ prio: 1, text: noteLabel() + ' — weave one ambient beat into this reply: ' + type + ' (' + tone + '). Keep it subtle and true to the scene\'s tone; don\'t derail the player\'s action or force combat.' });
         }
 
         if (!queue.length) return null;
@@ -2698,7 +2713,7 @@
         const strikeLines = res.steps.map(st => { const t = TIERS[st.tier] || TIERS.FAILURE; return '  • ' + st.strike + ' → ' + t.name; }).join('\n');
         const ov = TIERS[res.overall] || TIERS.FAILURE;
         const lines = [
-            'Bruce\'s note — duel, round ' + duel.round + ': ' + duel.player.name + ' commits to a combo',
+            noteLabel() + ' — duel, round ' + duel.round + ': ' + duel.player.name + ' commits to a combo',
             'Tell the combo strike by strike, in order, each result exactly as given:',
             strikeLines,
             'Taken together the exchange is a ' + ov.name + ' — ' + ov.text,
@@ -2744,7 +2759,7 @@
         // Recovery exchange: narrate restoration + ceded tempo, not a clash.
         if (res.recover) {
             const lines = [
-                'Bruce\'s note — duel, round ' + duel.round + ': ' + duel.player.name + ' vs ' + duel.opp.name,
+                noteLabel() + ' — duel, round ' + duel.round + ': ' + duel.player.name + ' vs ' + duel.opp.name,
                 duel.player.name + ' disengages to recover: ' + adj.action + '.',
             ];
             if (res.gained > 0) lines.push(duel.player.name + ' regains composure and steadies — noticeably refreshed, wounds or fatigue eased (but not erased). Show the recovery working.');
@@ -2763,7 +2778,7 @@
         const t = TIERS[res.tier] || TIERS.FAILURE;
         const fx = EXCHANGE_EFFECTS[res.tier] || {};
         const lines = [
-            'Bruce\'s note — duel, round ' + duel.round + ': ' + duel.player.name + ' vs ' + duel.opp.name,
+            noteLabel() + ' — duel, round ' + duel.round + ': ' + duel.player.name + ' vs ' + duel.opp.name,
             duel.player.name + '\'s move: ' + adj.action + '.',
             'The exchange lands: ' + t.name + ' — ' + t.text,
         ];
@@ -2823,8 +2838,8 @@
     function buildArmedDirective(meta, adj) {
         const duel = meta.duel;
         const head = duel
-            ? 'Bruce\'s note — duel joined: ' + duel.player.name + ' vs ' + duel.opp.name
-            : 'Bruce\'s note — ' + (meta.battle && meta.battle.kind === 'war' ? 'war' : 'battle') + ' joined';
+            ? noteLabel() + ' — duel joined: ' + duel.player.name + ' vs ' + duel.opp.name
+            : noteLabel() + ' — ' + (meta.battle && meta.battle.kind === 'war' ? 'war' : 'battle') + ' joined';
         return [
             head,
             'They\'re only squaring up: ' + (adj.action || 'the squaring-up') + '. No blow has landed, nothing has succeeded or failed, nothing is decided yet.',
@@ -2845,7 +2860,7 @@
             return '- ' + label + ': ' + tier.name + ' — ' + tier.text;
         };
         return [
-            'Bruce\'s note — outcome pool:',
+            noteLabel() + ' — outcome pool:',
             who + ' tries: ' + attempt + '.',
             'Pick the one row that matches the attempt\'s true footing, then tell that outcome:',
             row('Advantaged (clear edge: superior skill, position, or tool)', 2),
@@ -3111,7 +3126,7 @@
         const t = TIERS[res.tier] || TIERS.FAILURE;
         const stakes = adj.stakes ? (' Stakes: ' + adj.stakes + '.') : '';
         return [
-            'Bruce\'s note — how this goes:',
+            noteLabel() + ' — how this goes:',
             adj.actor + ' tries: ' + adj.action + '.',
             'How it lands: ' + t.name + ' — ' + t.text + stakes,
             ...guardLines(adj, adj.actor, adj.kind === 'actor' ? adj.opposition : 'The opposition', res.tier),
@@ -3852,7 +3867,7 @@
                 const res = resolveAdj(adj, meta);
                 const t = TIERS[res.tier] || TIERS.FAILURE;
                 const directive = [
-                    'Bruce\'s note — amid the ' + adj.army_scale,
+                    noteLabel() + ' — amid the ' + adj.army_scale,
                     adj.actor + ' tries: ' + adj.action + '.',
                     'How it lands: ' + t.name + ' — ' + t.text,
                     'This settles ' + adj.actor + '\'s personal moment inside the larger battle; the war\'s tide isn\'t decided by this one moment.' + threadNote,
@@ -3869,8 +3884,8 @@
 
             const res = resolveAdj(adj, meta);
             const directive = buildDirective(adj, res)
-                + (conditionNote ? '\nBruce\'s note — a lasting condition: ' + conditionNote + '. Let it show in the prose; it lasts until it\'s resolved.' : '')
-                + (composureNote ? '\nBruce\'s note — state of mind: ' + composureNote + ' Let it color their focus and demeanor; no mention of meters.' : '');
+                + (conditionNote ? '\n' + noteLabel() + ' — a lasting condition: ' + conditionNote + '. Let it show in the prose; it lasts until it\'s resolved.' : '')
+                + (composureNote ? '\n' + noteLabel() + ' — state of mind: ' + composureNote + ' Let it color their focus and demeanor; no mention of meters.' : '');
             setInjection(directive);
 
             commitCache(directive, res.tier);
@@ -4521,10 +4536,11 @@
      *  blanket `m.history = []` destroyed. */
     function fightHistoryFilter(kind) {
         const isDuel = kind === 'duel';
-        // Legacy "[ARBITER — …]" headers AND current "Bruce's note — …" headers.
+        // Legacy "[ARBITER — …]" headers AND current "<name>'s note — …" headers
+        // (any persona name or the Author's-note fallback — history outlives renames).
         const prefix = isDuel
-            ? /^\s*(?:\[ARBITER — duel|Bruce's note — duel)/i
-            : /^\s*(?:\[ARBITER — (?:battle|war)|Bruce's note — (?:battle|war))/i;
+            ? /^\s*(?:\[ARBITER — duel|[^\n]{0,42}'s note — duel)/i
+            : /^\s*(?:\[ARBITER — (?:battle|war)|[^\n]{0,42}'s note — (?:battle|war))/i;
         return (h) => {
             if (!h || typeof h !== 'object') return false;
             if (h.snap && (isDuel ? h.snap.d : h.snap.b)) return true;

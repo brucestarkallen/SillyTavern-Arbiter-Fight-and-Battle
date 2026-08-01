@@ -22,7 +22,7 @@ ok('encounter defaults include stranger/beggar spawner', E.ENCOUNTER_TYPES.some(
     engines: { surprise: { dc: 999 }, encounter: { dc: 1 }, world: { dc: 999 } }, tickCount: 0, threads: [] };
   await I([{ is_user: true, mes: 'a slow afternoon passes', send_date: 'q1' }], 0, () => {}, 'normal');
   const hint = String(injections.ARBITER_OUTCOME_EVENT || '');
-  ok('encounter hint fired', hint.includes("Bruce's note"));
+  ok('encounter hint fired', hint.includes("Jovan's note"));
   ok('hint is tone-guarded (no forced combat)', hint.includes('no forced combat'));
 
   // 4. Encounter table override respected

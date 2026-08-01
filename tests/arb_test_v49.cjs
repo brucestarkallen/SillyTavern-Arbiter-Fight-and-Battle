@@ -105,7 +105,7 @@ const check = (extra) => JSON.stringify(Object.assign({ check: true, action: 'th
     genRawCalls = 0; injections.ARBITER_OUTCOME = '';
     await I([um('I leap the chasm', 'r1')], 0, () => {}, 'normal');
     ok('empty first response retried (≥3 raw calls)', genRawCalls >= 3);
-    ok('the retried check landed a binding directive', /Bruce's note/.test(injections.ARBITER_OUTCOME));
+    ok('the retried check landed a binding directive', /Jovan's note/.test(injections.ARBITER_OUTCOME));
     respQueue = null;
 
     /* ── 6. mode exclusivity ─────────────────────────────────────────────── */

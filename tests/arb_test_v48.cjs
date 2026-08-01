@@ -64,7 +64,7 @@ const lastDirective = () => { for (let i = injected.length - 1; i >= 0; i--) if 
     injected = []; genRawCalls = 0;
     await I([{ is_user: true, name: 'Jovan', mes: 'I strike Kaol down', send_date: 's8' }], 0, () => {}, 'normal');
     ok('stale profileId does not dead-end: raw fallback was called', genRawCalls > 0);
-    ok('stale profileId still yields a binding directive', /Bruce's note/.test(lastDirective()));
+    ok('stale profileId still yields a binding directive', /Jovan's note/.test(lastDirective()));
 
     /* ── 1+2. cross-chat epoch: stale check discarded, new chat not blocked ── */
     // Wire CHAT_CHANGED by re-running initEvents through a fresh interceptor…
@@ -90,7 +90,7 @@ const lastDirective = () => { for (let i = injected.length - 1; i >= 0; i--) if 
         injected = [];
         release(); rawGate = null;
         await p;
-        const staleInjections = injected.filter(x => x.val && /Bruce's note/.test(x.val));
+        const staleInjections = injected.filter(x => x.val && /Jovan's note/.test(x.val));
         ok('stale cross-chat check injects NOTHING into the new chat', staleInjections.length === 0);
         ok('stale cross-chat check commits NO cache into either chat', !md.arbiter.cache && !oldChatMd.arbiter.cache);
 
@@ -107,7 +107,7 @@ const lastDirective = () => { for (let i = injected.length - 1; i >= 0; i--) if 
         rawGate = null; // fresh call resolves instantly
         injected = [];
         await I([{ is_user: true, name: 'Jovan', mes: 'I pry the chest open', send_date: 'e3' }], 0, () => {}, 'normal');
-        ok('new chat check is NOT blocked by a stale in-flight latch', /Bruce's note/.test(lastDirective()));
+        ok('new chat check is NOT blocked by a stale in-flight latch', /Jovan's note/.test(lastDirective()));
         release(); await pStale;
     } else {
         ok('epoch guard testable (CHAT_CHANGED wired)', false);
