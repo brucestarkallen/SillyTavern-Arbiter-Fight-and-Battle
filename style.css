@@ -24,6 +24,9 @@
 #arb_settings .arb_num { width: 74px; }
 #arb_settings textarea { width: 100%; font-family: monospace; font-size: .84em; border-radius: 6px; min-height: 42px; }
 #arb_settings .arb_hint { opacity: .68; font-size: .82em; line-height: 1.35; margin: 2px 0 9px 0; }
+/* Inline de-emphasis inside a label ("(optional)") — the same muted voice as
+   .arb_hint, but flowing within the line rather than owning its own block. */
+#arb_settings .arb_dim { opacity: .6; font-weight: normal; font-size: .9em; }
 #arb_settings .arb_threadlist { font-family: monospace; opacity: .85; }
 
 #arb_settings .arb_buttons { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
@@ -39,6 +42,11 @@
 #arb_settings .arb_t_SETBACK { background: #8a5a1d; color: #fff; }
 #arb_settings .arb_t_FAILURE { background: #8b3a3a; color: #fff; }
 #arb_settings .arb_t_DISASTER { background: #6b1010; color: #fff; }
+/* Tie tiers (tieCheck). Deliberately OFF the green-to-red win/lose axis: neither
+   side prevailed, so the badge must not read as a shade of success or failure.
+   TRADE is contested (both land); STALEMATE is inert (neither does). */
+#arb_settings .arb_t_TRADE { background: #2f6b7a; color: #fff; }
+#arb_settings .arb_t_STALEMATE { background: #4a4f5e; color: #fff; }
 
 /* v0.8: activity indicator — "Arbiter is working…" */
 #arb_activity { position: fixed; bottom: 74px; right: 14px; z-index: 9999;

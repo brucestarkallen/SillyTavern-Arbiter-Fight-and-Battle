@@ -22,7 +22,7 @@
     'use strict';
 
     const MODULE = 'arbiter';
-    const VERSION = '0.41.0';
+    const VERSION = '0.42.0';
     const INJECT_KEY = 'ARBITER_OUTCOME';
     const LOG = '[Arbiter]';
     // Committed-turn history depth: how many resolved player turns keep a
@@ -977,11 +977,6 @@
         return out;
     }
 
-    function extractJson(text) {
-        const c = extractJsonCandidates(text, 1);
-        return c.length ? c[0] : null;
-    }
-
     /* ------------------------------------------------------------------ */
     /* Adjudication                                                        */
     /* ------------------------------------------------------------------ */
@@ -1427,18 +1422,6 @@
         return units;
     }
 
-    // Is `name` the player? True for the player's exact name, a fragment of it (a
-    // bare surname/given-name), or the player's name extended — token-based, so a
-    // distinct ally who merely shares a surname (a sibling) is NOT filtered out.
-    function isPlayerName(name, playerName) {
-        const n = String(name || '').toLowerCase().trim(), p = String(playerName || '').toLowerCase().trim();
-        if (!n || !p) return false;
-        if (n === p) return true;
-        const nt = n.split(/[\s,]+/).filter(Boolean), pt = p.split(/[\s,]+/).filter(Boolean);
-        if (!nt.length || !pt.length) return false;
-        return nt.every(t => pt.includes(t)) || pt.every(t => nt.includes(t));
-    }
-
     function startBattle(meta, allyNames, enemyNames, domain, scaleMismatch, oppEstimate) {
         const s = getSettings();
         const d = String(domain || 'melee').toLowerCase();
@@ -1720,10 +1703,6 @@
             condition_change: normalizeConditionChange(obj.condition_change),
             why: String(obj.why || '').slice(0, 160),
         };
-    }
-
-    function warActive(meta) {
-        return battleActive(meta) && meta.battle.kind === 'war';
     }
 
     function startWar(meta, allyNames, enemyNames, enemyCommander, scaleMismatch) {
@@ -2850,7 +2829,6 @@
 
     /** Fast mode: zero-LLM pre-rolled pool, NE-P style (weaker: the model picks the footing). */
     function buildFastDirective(meta, lastUserMes) {
-        const s = getSettings();
         const preset = getPreset();
         const attempt = String(lastUserMes.mes).replace(/\s+/g, ' ').slice(0, 90);
         const who = mcName(meta);

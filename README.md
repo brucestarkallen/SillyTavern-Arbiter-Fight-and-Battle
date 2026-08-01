@@ -1097,16 +1097,58 @@ fight, not to win the arithmetic. It remains a real move (a safe moment restores
 more than a desperate snatch), it still cedes the initiative, and its log row is
 still fully auditable.
 
+## The injection voice is the player's own (v0.41)
+
+Every directive Arbiter injects now reads as a note from the human player, so it
+carries their persona name — "Jovan's note — duel, round 3: …". A storyteller
+persona that bristles at system-voice instructions reads a note from its own
+player as exactly what it is. ST's unset-persona defaults are the literal
+role-words "User" and "Player", which read as corporate rather than personal, so
+those fall back to the universal fiction convention: "Author's note".
+
+## The shipped assets agree with the code (v0.42)
+
+`index.js` and `style.css` ship together and nothing checked that they still
+described the same extension. They had drifted badly: `style.css` was last
+touched at **v0.9.0** while `index.js` reached **v0.41.0**.
+
+In that gap the tie system landed. `tieCheck` returns `TRADE` or `STALEMATE`, and
+`tieBand` defaults to `0.06`, so both fire in ordinary play — but no
+`.arb_t_TRADE` or `.arb_t_STALEMATE` rule was ever written. `TIERS` and
+`TIER_MEANING` both covered them, so nothing ever threw; the log simply rendered
+those rows with the bare `.arb_badge` rule — bold text on no background — while
+every other tier carried its colour. A `.arb_dim` inline hint had the same fate.
+Both are fixed, with the tie badges deliberately placed **off** the green-to-red
+win/lose axis: neither side prevailed, so the badge must not read as a shade of
+success or failure.
+
+The rules are the patch; the gate is the fix. Nothing checked, which is why this
+shipped invisibly for 32 versions, so `arb_test_v62.cjs` now asserts that every
+`TIERS` key has a matching `.arb_t_<KEY>` rule, that every static `arb_` class
+referenced in `index.js` exists in `style.css`, that `manifest.json`'s version
+equals the in-code `VERSION` stamp, and that `tieBand`'s default stays above zero
+so the tie guard cannot quietly go hollow. A ninth tier added without CSS now
+fails the gate instead of shipping unstyled. Each of the four guards was
+negative-tested by reintroducing its defect and confirming exit 1.
+
+Also removed in this pass: three functions that were defined and never called
+(`extractJson`, `isPlayerName`, `warActive`). Each was checked for a lost call
+site rather than assumed dead — all three have live replacements
+(`extractJsonCandidates` called directly, `samePersonName` via `isMcAlias` with
+token-for-token identical semantics, and the inline `kind === 'war'` test).
+
 ## Tests
 
-`tests/` contains 61 suites covering every invariant (including that every toast is plain text — no markup, no double-escaping, in any SillyTavern build): the probability
+`tests/` contains 63 suites covering every invariant (including that every toast is plain text — no markup, no double-escaping, in any SillyTavern build): the probability
 curve, tier slicing per preset, exchange effects, full battles to
 conclusion, snapshot rewinds, event tiers, thread ladders, memory-collector
 coverage, gate behavior, player identity (story name vs persona label),
 the outcome-only fight style (verdicts without health or an engine-called
 end), fight-or-not intelligence (declarations arm, attempts roll), and
 established-defense guards (verdicts scoped by the fiction's own rules),
-and injection placement (depth/role honored exactly, re-applied live).
+injection placement (depth/role honored exactly, re-applied live), and
+shipped-asset consistency (every tier badge and static class has a style rule;
+the manifest version and the in-code stamp agree).
 Run them with Node (no dependencies):
 `sh tests/run_all.sh`. Any future change should keep them green.
 
